@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+.blacknode-runtime/
+dist/
+build/
+*.egg-info/

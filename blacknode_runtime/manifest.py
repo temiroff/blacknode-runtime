@@ -1,0 +1,110 @@
+"""Truthful runtime and package inventory for deployment preflight."""
+
+from __future__ import annotations
+
+import importlib.metadata
+import platform
+import sys
+import tomllib
+from pathlib import Path
+from typing import Any
+
+from . import __version__
+from .config import RuntimeConfig
+
+
+FEATURES = [
+    "manifest_v1",
+    "deployment_bundle_v1",
+    "process_supervision_v1",
+    "deployment_logs_v1",
+    "rollback_v1",
+]
+
+
+def _distribution_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
+def _workspace_packages(root: Path | None) -> list[dict[str, str]]:
+    if root is None:
+        return []
+    packages_dir = root / "packages"
+    found: dict[str, dict[str, str]] = {}
+    if not packages_dir.is_dir():
+        return []
+    for manifest_path in sorted(packages_dir.glob("*/blacknode-package.toml")):
+        try:
+            payload = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+            package = payload.get("package", {})
+            name = str(package.get("name") or "").strip()
+            version = str(package.get("version") or "").strip()
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        if name:
+            found[name] = {
+                "name": name,
+                "version": version,
+                "source": "workspace",
+            }
+    return sorted(found.values(), key=lambda item: item["name"])
+
+
+def _installed_blacknode_packages() -> list[dict[str, str]]:
+    found: dict[str, dict[str, str]] = {}
+    for distribution in importlib.metadata.distributions():
+        name = str(distribution.metadata.get("Name") or "").strip()
+        normalized = name.lower().replace("_", "-")
+        if normalized == "blacknode" or normalized.startswith("blacknode-"):
+            found[normalized] = {
+                "name": normalized,
+                "version": str(distribution.version or ""),
+                "source": "python",
+            }
+    return sorted(found.values(), key=lambda item: item["name"])
+
+
+def runtime_manifest(config: RuntimeConfig) -> dict[str, Any]:
+    root = Path(config.blacknode_root) if config.blacknode_root else None
+    blacknode_version = _distribution_version("blacknode")
+    packages_by_name = {
+        item["name"]: item
+        for item in _installed_blacknode_packages()
+    }
+    packages_by_name.update({
+        item["name"]: item
+        for item in _workspace_packages(root)
+    })
+    packages_by_name["blacknode-runtime"] = {
+        "name": "blacknode-runtime",
+        "version": __version__,
+        "source": "runtime",
+    }
+    packages = sorted(packages_by_name.values(), key=lambda item: item["name"])
+    return {
+        "service": "blacknode-runtime",
+        "protocol_version": 1,
+        "runtime_version": __version__,
+        "device_id": config.device_id,
+        "features": list(FEATURES),
+        "python": {
+            "version": platform.python_version(),
+            "implementation": platform.python_implementation(),
+            "executable": sys.executable,
+        },
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+        "blacknode": {
+            "installed": bool(blacknode_version),
+            "version": blacknode_version,
+            "root": str(root) if root else "",
+        },
+        "packages": packages,
+        "hardware_url": config.hardware_url,
+    }

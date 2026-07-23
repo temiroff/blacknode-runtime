@@ -1,0 +1,17 @@
+[package]
+name = "blacknode-runtime"
+version = "0.1.0"
+description = "Authenticated remote deployment, runtime inspection, process supervision, logs, and rollback."
+requires-blacknode = ">=0.3.0"
+layer = "runtime"
+component-mode = true
+
+[components.service]
+description = "Device runtime manifest and managed workflow deployment service."
+default = true
+capabilities = [
+  "runtime.manifest",
+  "runtime.deployment",
+  "runtime.supervision",
+  "runtime.rollback",
+]
