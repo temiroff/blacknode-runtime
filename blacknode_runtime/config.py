@@ -60,6 +60,7 @@ class RuntimeConfig:
     def save(self, path: Path) -> Path:
         path = path.expanduser().resolve()
         path.parent.mkdir(parents=True, exist_ok=True)
+        Path(self.state_dir).mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
             temporary.write_text(

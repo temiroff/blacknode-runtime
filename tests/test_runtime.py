@@ -46,6 +46,7 @@ def test_config_round_trip_contains_token_path_not_secret(tmp_path: Path):
     config_path = config.save(tmp_path / "runtime.json")
     loaded = RuntimeConfig.load(config_path)
     assert loaded == config
+    assert Path(config.state_dir).is_dir()
     assert load_auth_token(token_path) == "x" * 48
     assert "x" * 48 not in config_path.read_text(encoding="utf-8")
 
