@@ -30,6 +30,7 @@ def render_unit(*, repo: Path, user: str, host: str, port: int, config: Path, st
     python = repo / ".venv" / "bin" / "python"
     doctor = repo / "scripts" / "runtime_doctor.py"
     service = repo / "scripts" / "runtime_service.py"
+    with_ros_env = repo / "scripts" / "with_ros_env.sh"
     package_path = repo / "packages"
     return "\n".join([
         "[Unit]",
@@ -47,7 +48,7 @@ def render_unit(*, repo: Path, user: str, host: str, port: int, config: Path, st
         f"Environment={quote(f'BLACKNODE_PACKAGE_PATH={package_path}')}",
         f"ExecStartPre={quote(str(python))} {quote(str(doctor))} --config {quote(str(config))}",
         (
-            f"ExecStart={quote(str(python))} {quote(str(service))} "
+            f"ExecStart={quote(str(with_ros_env))} {quote(str(python))} {quote(str(service))} "
             f"--host {quote(host)} --port {port} --config {quote(str(config))}"
         ),
         "Restart=on-failure",

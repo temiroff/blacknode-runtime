@@ -24,6 +24,9 @@ The setup script creates `.venv`, installs Blacknode Runtime and Blacknode
 core, finds the sibling hardware pairing token, saves local configuration, and
 runs readiness checks. It never copies the token into Git or the runtime
 configuration. Linux devices with ROS 2 installed use that native graph.
+Foreground and systemd starts automatically source the installed
+`/opt/ros/<distro>/setup.bash`, so deployed workflows and their driver
+processes inherit `rclpy`, ROS topic discovery, and the configured ROS domain.
 
 If the repositories are not siblings, provide the token path:
 

@@ -20,5 +20,5 @@ fi
 echo "Starting Blacknode Runtime"
 echo "Listening on http://$host:$port"
 echo "Press Ctrl+C to stop."
-exec "$python" "$repo_dir/scripts/runtime_service.py" \
+exec "$repo_dir/scripts/with_ros_env.sh" "$python" "$repo_dir/scripts/runtime_service.py" \
   --host "$host" --port "$port" --config "$config"
