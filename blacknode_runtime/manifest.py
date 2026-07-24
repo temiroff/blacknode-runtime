@@ -20,6 +20,7 @@ FEATURES = [
     "process_supervision_v1",
     "deployment_logs_v1",
     "rollback_v1",
+    "package_sync_v1",
 ]
 
 

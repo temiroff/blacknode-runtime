@@ -71,24 +71,36 @@ http://192.168.1.87:8766/health
 `/manifest` and every deployment endpoint require the same pairing token used
 by the hardware service.
 
-## Install workflow packages
+## Workflow package synchronization
 
 The runtime needs every extension package that owns a node in the deployed
-workflow. Install packages through the runtime so they are available to both
-foreground runs and the systemd service:
+workflow. The Blacknode editor includes the required package sources in the
+validated deployment plan. When the user selects **Stage** or **Stage & run**,
+the editor calls the authenticated package-sync endpoint before uploading the
+workflow.
+
+Package synchronization:
+
+- clones only package sources declared by the workflow or Blacknode package
+  index;
+- installs the package's declared prerequisites into the runtime environment;
+- loads its registered nodes;
+- behaves idempotently when the requested version is already present;
+- fast-forwards a clean package checkout when the editor requests a newer
+  published version; and
+- verifies package and node availability before the workflow is staged.
+
+Manual package installation remains available for maintenance:
 
 ```bash
 ./install-package.sh blacknode-perception
 ```
 
-For example, `Camera` is provided by `blacknode-perception`. The package
-installer clones or updates the package under `packages/`, installs its
-declared dependencies, updates the systemd environment, and restarts the
-runtime service. Re-run the same command to update and reconfigure a package.
-
-After installation, return to the editor and select **Validate** again. Target
-runtime validation checks both required packages and registered node types
-before staging.
+For example, `Camera` is provided by `blacknode-perception`. Both automatic and
+manual installation use the same `packages/` directory and Blacknode package
+contracts. Package releases must bump `version` in `blacknode-package.toml`;
+the editor sends that version and source to the runtime, so new package
+releases do not require a runtime update.
 
 ## Runtime API
 
@@ -96,6 +108,7 @@ before staging.
 |---|---|---|
 | `GET` | `/health` | Public service identity |
 | `GET` | `/manifest` | Python, platform, Blacknode, package, and feature inventory |
+| `POST` | `/packages/sync` | Idempotently install and load declared workflow packages |
 | `GET` | `/deployments` | List staged and running deployments |
 | `POST` | `/deployments` | Stage a Python deployment revision |
 | `GET` | `/deployments/{id}` | Inspect one deployment |

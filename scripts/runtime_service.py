@@ -8,6 +8,7 @@ from pathlib import Path
 from blacknode_runtime.auth import load_auth_token
 from blacknode_runtime.config import RuntimeConfig
 from blacknode_runtime.deployments import DeploymentStore
+from blacknode_runtime.package_manager import PackageManager
 from blacknode_runtime.server import serve
 
 
@@ -20,7 +21,15 @@ def main() -> int:
     config = RuntimeConfig.load(args.config)
     token = load_auth_token(Path(config.auth_token_file))
     store = DeploymentStore(Path(config.state_dir) / "deployments")
-    serve(config, store, token, host=args.host, port=args.port)
+    package_manager = PackageManager(Path(__file__).resolve().parents[1] / "packages")
+    serve(
+        config,
+        store,
+        token,
+        package_manager=package_manager,
+        host=args.host,
+        port=args.port,
+    )
     return 0
 
 

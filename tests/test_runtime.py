@@ -15,6 +15,7 @@ from blacknode_runtime.auth import load_auth_token
 from blacknode_runtime.config import RuntimeConfig
 from blacknode_runtime.deployments import DeploymentError, DeploymentStore
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
+from blacknode_runtime.package_manager import PackageManager, PackageSyncError
 from blacknode_runtime.server import create_server
 from scripts.render_systemd_unit import render_unit
 
@@ -97,6 +98,17 @@ def test_blacknode_package_manifest_loads():
     assert package["component-mode"] is True
 
 
+def test_package_sync_rejects_source_repository_name_mismatch(tmp_path: Path):
+    manager = PackageManager(tmp_path / "packages")
+    with pytest.raises(PackageSyncError, match="repository name"):
+        manager.sync({
+            "packages": [{
+                "name": "blacknode-perception",
+                "git_url": "https://github.com/temiroff/not-perception.git",
+            }],
+        })
+
+
 def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
     store = DeploymentStore(tmp_path / "deployments")
     first = store.stage({
@@ -166,6 +178,58 @@ def test_http_service_requires_auth_and_serves_manifest_and_deployments(tmp_path
         assert status == 201
         _, deployments = _request(f"{base}/deployments", token=token)
         assert [item["id"] for item in deployments["deployments"]] == [staged["id"]]
+    finally:
+        server.shutdown()
+        server.server_close()
+        store.stop_all()
+
+
+def test_http_package_sync_is_authenticated_and_delegated(tmp_path: Path):
+    class FakePackageManager:
+        def __init__(self):
+            self.payloads = []
+
+        def sync(self, payload):
+            self.payloads.append(payload)
+            return {
+                "ok": True,
+                "installed": [{"name": "blacknode-perception", "version": "0.3.0"}],
+                "already_present": [],
+                "messages": [],
+            }
+
+    token = "runtime-pairing-token-" + "x" * 32
+    config, _ = _config(tmp_path, token)
+    store = DeploymentStore(tmp_path / "deployments")
+    package_manager = FakePackageManager()
+    server = create_server(
+        config,
+        store,
+        token,
+        package_manager=package_manager,
+        port=0,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    payload = {
+        "packages": [{
+            "name": "blacknode-perception",
+            "git_url": "https://github.com/temiroff/blacknode-perception.git",
+        }],
+    }
+    try:
+        with pytest.raises(urllib.error.HTTPError) as unauthorized:
+            _request(f"{base}/packages/sync", payload=payload)
+        assert unauthorized.value.code == 401
+        status, result = _request(
+            f"{base}/packages/sync",
+            token=token,
+            payload=payload,
+        )
+        assert status == 200
+        assert result["installed"][0]["name"] == "blacknode-perception"
+        assert package_manager.payloads == [payload]
     finally:
         server.shutdown()
         server.server_close()

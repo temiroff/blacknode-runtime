@@ -12,6 +12,7 @@ from .auth import authorization_matches
 from .config import RuntimeConfig
 from .deployments import DeploymentError, DeploymentStore
 from .manifest import runtime_manifest
+from .package_manager import PackageManager, PackageSyncError
 
 
 MAX_REQUEST_BYTES = 3 * 1024 * 1024
@@ -22,6 +23,7 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
     config: RuntimeConfig
     store: DeploymentStore
     auth_token: str
+    package_manager: PackageManager | None
 
     def log_message(self, _format: str, *_args: Any) -> None:
         return
@@ -106,6 +108,12 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             payload = self._json_body()
+            if path == "/packages/sync":
+                if self.package_manager is None:
+                    self._send(503, {"ok": False, "error": "package sync is not configured"})
+                else:
+                    self._send(200, self.package_manager.sync(payload))
+                return
             if path == "/deployments":
                 self._send(201, self.store.stage(payload))
                 return
@@ -127,6 +135,8 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
         except KeyError:
             self._send(404, {"ok": False, "error": "deployment not found"})
         except DeploymentError as exc:
+            self._send(409, {"ok": False, "error": str(exc)})
+        except PackageSyncError as exc:
             self._send(409, {"ok": False, "error": str(exc)})
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -150,6 +160,7 @@ def create_server(
     store: DeploymentStore,
     auth_token: str,
     *,
+    package_manager: PackageManager | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
 ) -> ThreadingHTTPServer:
@@ -158,7 +169,12 @@ def create_server(
     handler = type(
         "BoundRuntimeRequestHandler",
         (RuntimeRequestHandler,),
-        {"config": config, "store": store, "auth_token": auth_token},
+        {
+            "config": config,
+            "store": store,
+            "auth_token": auth_token,
+            "package_manager": package_manager,
+        },
     )
     return ThreadingHTTPServer((host, port), handler)
 
@@ -168,10 +184,18 @@ def serve(
     store: DeploymentStore,
     auth_token: str,
     *,
+    package_manager: PackageManager | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
 ) -> None:
-    server = create_server(config, store, auth_token, host=host, port=port)
+    server = create_server(
+        config,
+        store,
+        auth_token,
+        package_manager=package_manager,
+        host=host,
+        port=port,
+    )
     print(f"blacknode-runtime listening on http://{host}:{port}")
     try:
         server.serve_forever()
