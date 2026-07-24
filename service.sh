@@ -10,7 +10,7 @@ unit_name="blacknode-runtime.service"
 usage() {
   echo "Usage: ./service.sh COMMAND"
   echo
-  echo "Commands: status, start, stop, restart, check, pairing, docker, logs, follow"
+  echo "Commands: overview, status, deployments, start, stop, restart, check, pairing, docker, logs, follow"
 }
 
 if [[ ! -x "$python" || ! -f "$config" ]]; then
@@ -28,7 +28,25 @@ check_service() {
 }
 
 case "$command_name" in
-  status) sudo systemctl --no-pager --full status "$unit_name" || true; echo; check_service ;;
+  overview)
+    check_service --deployments
+    echo
+    hardware_dir="${BLACKNODE_HARDWARE_DIR:-$(cd -- "$repo_dir/.." && pwd)/blacknode-hardware}"
+    if [[ -x "$hardware_dir/service.sh" ]]; then
+      echo "Robot hardware services"
+      echo "======================="
+      if [[ -f "$hardware_dir/.blacknode-hardware/devices.json" ]]; then
+        "$hardware_dir/service.sh" --all check
+      else
+        "$hardware_dir/service.sh" check
+      fi
+    else
+      echo "Blacknode Hardware checkout was not found beside this runtime."
+      echo "Set BLACKNODE_HARDWARE_DIR, then run ./service.sh overview again."
+    fi
+    ;;
+  status) sudo systemctl --no-pager --full status "$unit_name" || true; echo; check_service --deployments ;;
+  deployments) check_service --deployments ;;
   start) sudo systemctl start "$unit_name"; check_service --wait 15 ;;
   stop) sudo systemctl stop "$unit_name"; echo "Blacknode Runtime stopped." ;;
   restart) sudo systemctl restart "$unit_name"; check_service --wait 15 ;;

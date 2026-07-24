@@ -45,7 +45,9 @@ BLACKNODE_CORE_PATH=/path/to/Blacknode ./setup_ubuntu.sh
 
 ```bash
 ./check.sh
+./service.sh overview
 ./service.sh status
+./service.sh deployments
 ./service.sh check
 ./service.sh pairing
 ./service.sh docker
@@ -53,6 +55,13 @@ BLACKNODE_CORE_PATH=/path/to/Blacknode ./setup_ubuntu.sh
 ./service.sh logs
 ./service.sh follow
 ```
+
+`./service.sh overview` is the first command to run when the device state is
+unclear. It shows runtime health, every deployment with its state, PID,
+revision, and target robot, then checks each configured hardware service and
+its USB identity. `./service.sh deployments` prints only the runtime and
+deployment summary. `./service.sh status` includes the systemd service details
+and the same deployment summary.
 
 `./service.sh docker` is an optional fallback for container-backed workflows.
 It installs Docker Engine when requested, enables it at boot, grants the

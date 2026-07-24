@@ -20,6 +20,7 @@ from blacknode_runtime.manifest import FEATURES, runtime_manifest
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
 from blacknode_runtime.server import create_server
 from scripts.render_systemd_unit import render_unit
+from scripts.service_check import print_deployments
 from scripts.show_pairing import main as show_pairing
 
 
@@ -87,6 +88,28 @@ def test_manifest_reports_real_runtime_features(tmp_path: Path):
     assert manifest["python"]["version"]
     assert manifest["device_id"] == "pi-test"
     assert isinstance(manifest["node_types"], list)
+
+
+def test_runtime_check_prints_deployment_owner_and_process(capsys):
+    print_deployments({
+        "deployments": [{
+            "id": "leader-live",
+            "name": "Leader live",
+            "state": "running",
+            "target_device_id": "leader-31481",
+            "pid": 4321,
+            "active_revision": "cafebabecafebabe",
+            "updated_at": "2026-07-24T23:00:00+00:00",
+            "error": "",
+        }],
+    })
+
+    output = capsys.readouterr().out
+    assert "1 total · 1 running" in output
+    assert "[RUNNING] Leader live" in output
+    assert "Target robot: leader-31481" in output
+    assert "PID: 4321" in output
+    assert "Revision: cafebabecafebabe" in output
 
 
 def test_manifest_reports_packages_from_runtime_package_path(
