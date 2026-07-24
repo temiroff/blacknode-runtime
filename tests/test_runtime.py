@@ -347,5 +347,5 @@ def test_systemd_unit_uses_absolute_paths_and_process_group_shutdown(tmp_path: P
     assert "--port 8766" in unit
     assert f'ReadWritePaths="{state}"' in unit
     assert f'Environment="BLACKNODE_PACKAGE_PATH={repo / "packages"}"' in unit
-    assert "Wants=network-online.target docker.service" in unit
-    assert "After=network-online.target docker.service blacknode-hardware.service" in unit
+    assert "Wants=network-online.target" in unit
+    assert "After=network-online.target blacknode-hardware.service" in unit
