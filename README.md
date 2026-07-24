@@ -28,14 +28,14 @@ configuration.
 If the repositories are not siblings, provide the token path:
 
 ```bash
-BLACKNODE_AUTH_TOKEN_FILE=/home/alex/blacknode-hardware/.blacknode-hardware/auth.token \
+BLACKNODE_AUTH_TOKEN_FILE=/path/to/blacknode-hardware/.blacknode-hardware/auth.token \
 ./setup_ubuntu.sh
 ```
 
 To install Blacknode core from a local checkout:
 
 ```bash
-BLACKNODE_CORE_PATH=/home/alex/Blacknode ./setup_ubuntu.sh
+BLACKNODE_CORE_PATH=/path/to/Blacknode ./setup_ubuntu.sh
 ```
 
 ## Check and manage the service
