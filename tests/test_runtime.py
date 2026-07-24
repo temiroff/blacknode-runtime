@@ -59,6 +59,34 @@ def test_manifest_reports_real_runtime_features(tmp_path: Path):
     assert set(FEATURES) <= set(manifest["features"])
     assert manifest["python"]["version"]
     assert manifest["device_id"] == "pi-test"
+    assert isinstance(manifest["node_types"], list)
+
+
+def test_manifest_reports_packages_from_runtime_package_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    packages_dir = tmp_path / "packages"
+    package_dir = packages_dir / "blacknode-example"
+    package_dir.mkdir(parents=True)
+    (package_dir / "blacknode-package.toml").write_text(
+        "[package]\n"
+        'name = "blacknode-example"\n'
+        'version = "1.2.3"\n'
+        'description = "Example"\n'
+        'requires-blacknode = ">=0.3.0"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BLACKNODE_PACKAGE_PATH", str(packages_dir))
+    config, _ = _config(tmp_path)
+
+    packages = {
+        item["name"]: item
+        for item in runtime_manifest(config)["packages"]
+    }
+
+    assert packages["blacknode-example"]["version"] == "1.2.3"
+    assert packages["blacknode-example"]["source"] == "workspace"
 
 
 def test_blacknode_package_manifest_loads():
@@ -162,3 +190,4 @@ def test_systemd_unit_uses_absolute_paths_and_process_group_shutdown(tmp_path: P
     assert "KillMode=control-group" in unit
     assert "--port 8766" in unit
     assert f'ReadWritePaths="{state}"' in unit
+    assert f'Environment="BLACKNODE_PACKAGE_PATH={repo / "packages"}"' in unit

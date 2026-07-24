@@ -20,6 +20,7 @@ sudo apt-get update
 sudo apt-get install -y git python3-pip python3-venv
 
 python3 -m venv .venv
+mkdir -p packages
 # shellcheck disable=SC1091
 source .venv/bin/activate
 python -m pip install --upgrade pip

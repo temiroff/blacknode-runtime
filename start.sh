@@ -6,6 +6,7 @@ python="$repo_dir/.venv/bin/python"
 config="${BLACKNODE_RUNTIME_CONFIG:-$repo_dir/.blacknode-runtime/runtime.json}"
 host="${BLACKNODE_RUNTIME_HOST:-0.0.0.0}"
 port="${BLACKNODE_RUNTIME_PORT:-8766}"
+export BLACKNODE_PACKAGE_PATH="${BLACKNODE_PACKAGE_PATH:-$repo_dir/packages}"
 
 if [[ ! -x "$python" ]]; then
   echo "Blacknode Runtime is not set up yet. Run ./setup_ubuntu.sh first."

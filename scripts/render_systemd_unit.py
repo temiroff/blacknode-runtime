@@ -30,6 +30,7 @@ def render_unit(*, repo: Path, user: str, host: str, port: int, config: Path, st
     python = repo / ".venv" / "bin" / "python"
     doctor = repo / "scripts" / "runtime_doctor.py"
     service = repo / "scripts" / "runtime_service.py"
+    package_path = repo / "packages"
     return "\n".join([
         "[Unit]",
         "Description=Blacknode Runtime Service",
@@ -43,6 +44,7 @@ def render_unit(*, repo: Path, user: str, host: str, port: int, config: Path, st
         f"User={user}",
         f"WorkingDirectory={working_directory(str(repo))}",
         'Environment="PYTHONUNBUFFERED=1"',
+        f"Environment={quote(f'BLACKNODE_PACKAGE_PATH={package_path}')}",
         f"ExecStartPre={quote(str(python))} {quote(str(doctor))} --config {quote(str(config))}",
         (
             f"ExecStart={quote(str(python))} {quote(str(service))} "

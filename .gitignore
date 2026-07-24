@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .blacknode-runtime/
+/packages/
 dist/
 build/
 *.egg-info/

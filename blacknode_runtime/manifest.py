@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import platform
 import sys
 import tomllib
@@ -29,27 +30,35 @@ def _distribution_version(name: str) -> str:
         return ""
 
 
+def _workspace_package_dirs(root: Path | None) -> list[Path]:
+    package_dirs: list[Path] = []
+    if root is not None:
+        package_dirs.append(root / "packages")
+    for raw_path in os.environ.get("BLACKNODE_PACKAGE_PATH", "").split(os.pathsep):
+        if raw_path.strip():
+            package_dirs.append(Path(raw_path).expanduser())
+    return list(dict.fromkeys(path.resolve() for path in package_dirs))
+
+
 def _workspace_packages(root: Path | None) -> list[dict[str, str]]:
-    if root is None:
-        return []
-    packages_dir = root / "packages"
     found: dict[str, dict[str, str]] = {}
-    if not packages_dir.is_dir():
-        return []
-    for manifest_path in sorted(packages_dir.glob("*/blacknode-package.toml")):
-        try:
-            payload = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
-            package = payload.get("package", {})
-            name = str(package.get("name") or "").strip()
-            version = str(package.get("version") or "").strip()
-        except (OSError, tomllib.TOMLDecodeError):
+    for packages_dir in _workspace_package_dirs(root):
+        if not packages_dir.is_dir():
             continue
-        if name:
-            found[name] = {
-                "name": name,
-                "version": version,
-                "source": "workspace",
-            }
+        for manifest_path in sorted(packages_dir.glob("*/blacknode-package.toml")):
+            try:
+                payload = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+                package = payload.get("package", {})
+                name = str(package.get("name") or "").strip()
+                version = str(package.get("version") or "").strip()
+            except (OSError, tomllib.TOMLDecodeError):
+                continue
+            if name:
+                found[name] = {
+                    "name": name,
+                    "version": version,
+                    "source": "workspace",
+                }
     return sorted(found.values(), key=lambda item: item["name"])
 
 
@@ -84,6 +93,11 @@ def runtime_manifest(config: RuntimeConfig) -> dict[str, Any]:
         "source": "runtime",
     }
     packages = sorted(packages_by_name.values(), key=lambda item: item["name"])
+    try:
+        from blacknode.node import _NODE_REGISTRY
+        node_types = sorted(_NODE_REGISTRY)
+    except Exception:
+        node_types = []
     return {
         "service": "blacknode-runtime",
         "protocol_version": 1,
@@ -106,5 +120,6 @@ def runtime_manifest(config: RuntimeConfig) -> dict[str, Any]:
             "root": str(root) if root else "",
         },
         "packages": packages,
+        "node_types": node_types,
         "hardware_url": config.hardware_url,
     }

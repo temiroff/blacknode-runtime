@@ -71,6 +71,25 @@ http://192.168.1.87:8766/health
 `/manifest` and every deployment endpoint require the same pairing token used
 by the hardware service.
 
+## Install workflow packages
+
+The runtime needs every extension package that owns a node in the deployed
+workflow. Install packages through the runtime so they are available to both
+foreground runs and the systemd service:
+
+```bash
+./install-package.sh blacknode-perception
+```
+
+For example, `Camera` is provided by `blacknode-perception`. The package
+installer clones or updates the package under `packages/`, installs its
+declared dependencies, updates the systemd environment, and restarts the
+runtime service. Re-run the same command to update and reconfigure a package.
+
+After installation, return to the editor and select **Validate** again. Target
+runtime validation checks both required packages and registered node types
+before staging.
+
 ## Runtime API
 
 | Method | Endpoint | Purpose |
