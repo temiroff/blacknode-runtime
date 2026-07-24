@@ -10,7 +10,7 @@ unit_name="blacknode-runtime.service"
 usage() {
   echo "Usage: ./service.sh COMMAND"
   echo
-  echo "Commands: status, start, stop, restart, check, logs, follow"
+  echo "Commands: status, start, stop, restart, check, pairing, logs, follow"
 }
 
 if [[ ! -x "$python" || ! -f "$config" ]]; then
@@ -33,6 +33,15 @@ case "$command_name" in
   stop) sudo systemctl stop "$unit_name"; echo "Blacknode Runtime stopped." ;;
   restart) sudo systemctl restart "$unit_name"; check_service --wait 15 ;;
   check) check_service "$@" ;;
+  pairing)
+    device_ip="${BLACKNODE_DEVICE_IP:-}"
+    if [[ -z "$device_ip" ]]; then
+      device_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    fi
+    device_ip="${device_ip:-DEVICE_IP}"
+    "$python" "$repo_dir/scripts/show_pairing.py" \
+      --config "$config" --url "http://$device_ip:$port"
+    ;;
   logs) sudo journalctl -u "$unit_name" -n 100 --no-pager ;;
   follow) sudo journalctl -u "$unit_name" -f ;;
   -h|--help|help) usage ;;

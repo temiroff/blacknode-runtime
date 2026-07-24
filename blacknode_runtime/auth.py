@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 from pathlib import Path
 
@@ -20,3 +21,7 @@ def authorization_matches(header: str | None, token: str) -> bool:
     if not header or not header.startswith("Bearer "):
         return False
     return hmac.compare_digest(header[7:].strip(), token)
+
+
+def token_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 import tomllib
@@ -11,13 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from blacknode_runtime.auth import load_auth_token
+from blacknode_runtime.auth import load_auth_token, token_fingerprint
 from blacknode_runtime.config import RuntimeConfig
 from blacknode_runtime.deployments import DeploymentError, DeploymentStore
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
 from blacknode_runtime.server import create_server
 from scripts.render_systemd_unit import render_unit
+from scripts.show_pairing import main as show_pairing
 
 
 def _config(tmp_path: Path, token: str = "x" * 48) -> tuple[RuntimeConfig, Path]:
@@ -50,6 +52,29 @@ def test_config_round_trip_contains_token_path_not_secret(tmp_path: Path):
     assert Path(config.state_dir).is_dir()
     assert load_auth_token(token_path) == "x" * 48
     assert "x" * 48 not in config_path.read_text(encoding="utf-8")
+
+
+def test_pairing_command_displays_runtime_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    token = "runtime-token-" + "x" * 32
+    config, _ = _config(tmp_path, token)
+    config_path = config.save(tmp_path / "runtime.json")
+    monkeypatch.setattr(sys, "argv", [
+        "show_pairing.py",
+        "--config",
+        str(config_path),
+        "--url",
+        "http://192.168.1.87:8766",
+    ])
+
+    assert show_pairing() == 0
+    output = capsys.readouterr().out
+    assert "http://192.168.1.87:8766" in output
+    assert f"Fingerprint: {token_fingerprint(token)}" in output
+    assert f"Runtime token: {token}" in output
 
 
 def test_manifest_reports_real_runtime_features(tmp_path: Path):

@@ -44,6 +44,7 @@ BLACKNODE_CORE_PATH=/path/to/Blacknode ./setup_ubuntu.sh
 ./check.sh
 ./service.sh status
 ./service.sh check
+./service.sh pairing
 ./service.sh restart
 ./service.sh logs
 ./service.sh follow
@@ -68,7 +69,11 @@ The public endpoint is:
 http://192.168.1.87:8766/health
 ```
 
-`/manifest` and every deployment endpoint require the same pairing token used
+`/manifest` and every deployment endpoint require the runtime pairing token
+shown by `./service.sh pairing`. A single-device installation commonly shares
+that token with the hardware service. Multi-robot hardware services may each
+have a different hardware token, while port 8766 continues to use one shared
+runtime token.
 by the hardware service.
 
 ## Workflow package synchronization
