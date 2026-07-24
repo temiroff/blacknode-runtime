@@ -19,6 +19,10 @@ fi
 sudo apt-get update
 sudo apt-get install -y git python3-pip python3-venv
 
+if [[ "${BLACKNODE_SKIP_DOCKER:-0}" != "1" ]]; then
+  ./setup-docker.sh --no-restart
+fi
+
 python3 -m venv .venv
 mkdir -p packages
 # shellcheck disable=SC1091

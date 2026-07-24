@@ -34,8 +34,8 @@ def render_unit(*, repo: Path, user: str, host: str, port: int, config: Path, st
     return "\n".join([
         "[Unit]",
         "Description=Blacknode Runtime Service",
-        "Wants=network-online.target",
-        "After=network-online.target blacknode-hardware.service",
+        "Wants=network-online.target docker.service",
+        "After=network-online.target docker.service blacknode-hardware.service",
         "StartLimitIntervalSec=60",
         "StartLimitBurst=5",
         "",

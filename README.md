@@ -20,10 +20,12 @@ cd blacknode-runtime
 ./install-service.sh
 ```
 
-The setup script creates `.venv`, installs Blacknode Runtime and Blacknode
-core, finds the sibling hardware pairing token, saves local configuration, and
-runs readiness checks. It never copies the token into Git or the runtime
-configuration.
+The setup script installs and enables Docker Engine, creates `.venv`, installs
+Blacknode Runtime and Blacknode core, finds the sibling hardware pairing
+token, saves local configuration, and runs readiness checks. It never copies
+the token into Git or the runtime configuration. Set
+`BLACKNODE_SKIP_DOCKER=1` only on a device that will use native ROS 2 or will
+not run container-backed workflows.
 
 If the repositories are not siblings, provide the token path:
 
@@ -45,10 +47,16 @@ BLACKNODE_CORE_PATH=/path/to/Blacknode ./setup_ubuntu.sh
 ./service.sh status
 ./service.sh check
 ./service.sh pairing
+./service.sh docker
 ./service.sh restart
 ./service.sh logs
 ./service.sh follow
 ```
+
+`./service.sh docker` is safe to rerun. It installs Docker Engine when needed,
+enables it at boot, grants the runtime user access to the Docker socket, and
+restarts the runtime service. The first ROS deployment then builds the local
+rosbridge image, which can take several minutes on a Raspberry Pi.
 
 The service listens on port `8766`. Allow it through Ubuntu's firewall once:
 

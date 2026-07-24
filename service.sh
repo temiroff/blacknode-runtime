@@ -10,7 +10,7 @@ unit_name="blacknode-runtime.service"
 usage() {
   echo "Usage: ./service.sh COMMAND"
   echo
-  echo "Commands: status, start, stop, restart, check, pairing, logs, follow"
+  echo "Commands: status, start, stop, restart, check, pairing, docker, logs, follow"
 }
 
 if [[ ! -x "$python" || ! -f "$config" ]]; then
@@ -41,6 +41,12 @@ case "$command_name" in
     device_ip="${device_ip:-DEVICE_IP}"
     "$python" "$repo_dir/scripts/show_pairing.py" \
       --config "$config" --url "http://$device_ip:$port"
+    ;;
+  docker)
+    "$repo_dir/setup-docker.sh"
+    if systemctl is-active --quiet "$unit_name"; then
+      check_service --wait 15
+    fi
     ;;
   logs) sudo journalctl -u "$unit_name" -n 100 --no-pager ;;
   follow) sudo journalctl -u "$unit_name" -f ;;
