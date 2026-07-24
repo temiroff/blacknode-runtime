@@ -80,7 +80,8 @@ by the hardware service.
 
 The runtime needs every extension package that owns a node in the deployed
 workflow. The Blacknode editor includes the required package sources in the
-validated deployment plan. When the user selects **Stage** or **Stage & run**,
+validated deployment plan. When the user selects **Send to device** or
+**Send & run**,
 the editor calls the authenticated package-sync endpoint before uploading the
 workflow.
 
@@ -89,6 +90,7 @@ Package synchronization:
 - clones only package sources declared by the workflow or Blacknode package
   index;
 - installs the package's declared prerequisites into the runtime environment;
+- activates the exact components and adapters declared by workflow metadata;
 - loads its registered nodes;
 - behaves idempotently when the requested version is already present;
 - fast-forwards a clean package checkout when the editor requests a newer
@@ -113,7 +115,7 @@ releases do not require a runtime update.
 |---|---|---|
 | `GET` | `/health` | Public service identity |
 | `GET` | `/manifest` | Python, platform, Blacknode, package, and feature inventory |
-| `POST` | `/packages/sync` | Idempotently install and load declared workflow packages |
+| `POST` | `/packages/sync` | Idempotently install packages and activate declared components and adapters |
 | `GET` | `/deployments` | List staged and running deployments |
 | `POST` | `/deployments` | Stage a Python deployment revision |
 | `GET` | `/deployments/{id}` | Inspect one deployment |

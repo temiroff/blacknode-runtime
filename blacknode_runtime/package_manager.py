@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 
 _PACKAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_COMPONENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _MAX_PACKAGES_PER_REQUEST = 32
 
 
@@ -40,6 +41,7 @@ class PackageManager:
 
         installed: list[dict[str, Any]] = []
         present: list[dict[str, Any]] = []
+        activated: list[dict[str, str]] = []
         messages: list[str] = []
         with self._lock:
             for spec in specs:
@@ -58,13 +60,64 @@ class PackageManager:
                         f"{spec['name']} synchronization failed: "
                         f"{type(exc).__name__}: {exc}"
                     ) from exc
+            for spec in specs:
+                try:
+                    activated.extend(self._activate_requirements(spec, messages))
+                except PackageSyncError:
+                    raise
+                except Exception as exc:
+                    raise PackageSyncError(
+                        f"{spec['name']} component activation failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
 
         return {
             "ok": True,
             "installed": installed,
             "already_present": present,
+            "activated": activated,
             "messages": messages[-100:],
         }
+
+    @staticmethod
+    def _activate_requirements(
+        spec: dict[str, Any],
+        messages: list[str],
+    ) -> list[dict[str, str]]:
+        from blacknode.packages import ensure_adapter_enabled, ensure_component_enabled
+
+        package_name = spec["name"]
+        activated: list[dict[str, str]] = []
+        for component_name in spec.get("components", []):
+            messages.append(f"Activating {package_name}/{component_name}")
+            ensure_component_enabled(
+                package_name,
+                component_name,
+                progress=messages.append,
+            )
+            activated.append({
+                "package": package_name,
+                "component": component_name,
+                "adapter": "",
+            })
+        for adapter in spec.get("adapters", []):
+            component_name = adapter["component"]
+            adapter_name = adapter["adapter"]
+            messages.append(
+                f"Activating {package_name}/{component_name}@{adapter_name}"
+            )
+            ensure_adapter_enabled(
+                package_name,
+                component_name,
+                adapter_name,
+                progress=messages.append,
+            )
+            activated.append({
+                "package": package_name,
+                "component": component_name,
+                "adapter": adapter_name,
+            })
+        return activated
 
     def _load_existing(
         self,
@@ -186,7 +239,7 @@ class PackageManager:
         }
 
     @staticmethod
-    def _package_spec(value: Any) -> dict[str, str]:
+    def _package_spec(value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise PackageSyncError("each package must be an object")
         name = str(value.get("name") or "").strip().lower()
@@ -209,4 +262,41 @@ class PackageManager:
             raise PackageSyncError(
                 f"{name} source repository name must also be {name}"
             )
-        return {"name": name, "source": source, "version": version}
+
+        raw_components = value.get("components", [])
+        if not isinstance(raw_components, list):
+            raise PackageSyncError(f"{name} components must be a list")
+        components = sorted({
+            str(component).strip().lower()
+            for component in raw_components
+            if isinstance(component, str) and str(component).strip()
+        })
+        if any(not _COMPONENT_NAME_RE.fullmatch(component) for component in components):
+            raise PackageSyncError(f"{name} contains an invalid component name")
+
+        raw_adapters = value.get("adapters", [])
+        if not isinstance(raw_adapters, list):
+            raise PackageSyncError(f"{name} adapters must be a list")
+        adapters: set[tuple[str, str]] = set()
+        for raw_adapter in raw_adapters:
+            if not isinstance(raw_adapter, dict):
+                raise PackageSyncError(f"{name} adapters must contain objects")
+            component = str(raw_adapter.get("component") or "").strip().lower()
+            adapter = str(raw_adapter.get("adapter") or "").strip().lower()
+            if (
+                not _COMPONENT_NAME_RE.fullmatch(component)
+                or not _COMPONENT_NAME_RE.fullmatch(adapter)
+            ):
+                raise PackageSyncError(f"{name} contains an invalid adapter requirement")
+            adapters.add((component, adapter))
+
+        return {
+            "name": name,
+            "source": source,
+            "version": version,
+            "components": components,
+            "adapters": [
+                {"component": component, "adapter": adapter}
+                for component, adapter in sorted(adapters)
+            ],
+        }

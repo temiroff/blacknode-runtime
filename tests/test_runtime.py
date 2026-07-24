@@ -9,6 +9,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,6 +133,72 @@ def test_package_sync_rejects_source_repository_name_mismatch(tmp_path: Path):
                 "git_url": "https://github.com/temiroff/not-perception.git",
             }],
         })
+
+
+def test_package_sync_activates_declared_components_and_adapters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import blacknode.packages as packages
+
+    manager = PackageManager(tmp_path / "packages")
+    package_dir = manager.root / "blacknode-skills"
+    package_dir.mkdir()
+    info = SimpleNamespace(
+        name="blacknode-skills",
+        version="0.1.0",
+        node_types=["ROS2LeaderFollower"],
+    )
+    monkeypatch.setattr(
+        manager,
+        "_load_existing",
+        lambda _spec, _path, _messages: info,
+    )
+    activated: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        packages,
+        "ensure_component_enabled",
+        lambda package, component, **_kwargs: (
+            activated.append(("component", package, component)) or info
+        ),
+    )
+    monkeypatch.setattr(
+        packages,
+        "ensure_adapter_enabled",
+        lambda package, component, adapter, **_kwargs: (
+            activated.append(("adapter", package, component, adapter)) or info
+        ),
+    )
+
+    result = manager.sync({
+        "packages": [{
+            "name": "blacknode-skills",
+            "git_url": "https://github.com/temiroff/blacknode-skills.git",
+            "version": "0.1.0",
+            "components": ["follow-person"],
+            "adapters": [{
+                "component": "follow-person",
+                "adapter": "ros2",
+            }],
+        }],
+    })
+
+    assert activated == [
+        ("component", "blacknode-skills", "follow-person"),
+        ("adapter", "blacknode-skills", "follow-person", "ros2"),
+    ]
+    assert result["activated"] == [
+        {
+            "package": "blacknode-skills",
+            "component": "follow-person",
+            "adapter": "",
+        },
+        {
+            "package": "blacknode-skills",
+            "component": "follow-person",
+            "adapter": "ros2",
+        },
+    ]
 
 
 def test_stage_start_logs_and_revision_rollback(tmp_path: Path):

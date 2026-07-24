@@ -21,6 +21,7 @@ FEATURES = [
     "deployment_logs_v1",
     "rollback_v1",
     "package_sync_v1",
+    "component_sync_v1",
 ]
 
 
