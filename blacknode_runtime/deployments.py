@@ -90,9 +90,15 @@ class DeploymentStore:
             revisions = list(existing.get("revisions", [])) if existing else []
             if revision not in revisions:
                 revisions.append(revision)
+            target_device_id = str(
+                manifest.get("target_device_id")
+                or (existing or {}).get("target_device_id")
+                or ""
+            ).strip()
             record = {
                 "id": deployment_id,
                 "name": name,
+                "target_device_id": target_device_id,
                 "state": "staged",
                 "staged_revision": revision,
                 "active_revision": existing.get("active_revision") if existing else None,

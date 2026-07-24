@@ -207,8 +207,9 @@ def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
         "name": "Example",
         "deployment_id": "example",
         "script": "print('revision one')\n",
-        "manifest": {"schema_version": 1},
+        "manifest": {"schema_version": 1, "target_device_id": "leader-device"},
     })
+    assert first["target_device_id"] == "leader-device"
     running = store.start(first["id"])
     assert running["state"] == "running"
     for _ in range(50):
@@ -225,6 +226,7 @@ def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
         "script": "print('revision two')\n",
         "manifest": {"schema_version": 1},
     })
+    assert second["target_device_id"] == "leader-device"
     assert len(second["revisions"]) == 2
     second = store.start("example")
     for _ in range(50):
