@@ -1,6 +1,6 @@
 """Blacknode remote deployment runtime."""
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 from .config import RuntimeConfig
 from .deployments import DeploymentError, DeploymentStore

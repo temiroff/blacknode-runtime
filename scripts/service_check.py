@@ -42,6 +42,11 @@ def print_deployments(payload: dict) -> None:
         print(f"[{state}] {name}")
         print(f"  ID: {item.get('id') or '—'}")
         print(f"  Target robot: {item.get('target_device_id') or 'not recorded'}")
+        if item.get("project_id"):
+            print(f"  Project: {item['project_id']}")
+            print(f"  Workflow: {item.get('workflow_slug') or 'not recorded'}")
+        else:
+            print("  Project: unassigned")
         print(f"  PID: {item.get('pid') or '—'}")
         print(f"  Revision: {item.get('active_revision') or item.get('staged_revision') or '—'}")
         print(f"  Updated: {item.get('updated_at') or '—'}")
