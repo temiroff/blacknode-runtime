@@ -193,6 +193,13 @@ Staging and starting are separate operations. A staged workflow cannot move
 hardware until it is explicitly started and then passes the hardware service's
 own calibration, freshness, limits, and authorization checks.
 
+Deployment manifests can include `project_id` and `workflow_slug`. The runtime
+persists both values on the deployment record and exposes them from every
+deployment endpoint. Existing records without these fields remain valid and
+are reported with empty values. Staging another revision preserves existing
+ownership when the fields are omitted and rejects attempts to move an owned
+deployment to another project or workflow.
+
 Local state is stored under `.blacknode-runtime/` and excluded from Git.
 
 ## Security

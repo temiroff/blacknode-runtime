@@ -19,6 +19,8 @@ from typing import Any
 
 MAX_SCRIPT_BYTES = 2 * 1024 * 1024
 _ID_RE = re.compile(r"[^a-z0-9]+")
+_PROJECT_ID_RE = re.compile(r"[a-z0-9-]{1,60}")
+_WORKFLOW_SLUG_RE = re.compile(r"[a-zA-Z0-9_-]{1,60}")
 
 
 class DeploymentError(RuntimeError):
@@ -81,6 +83,13 @@ class DeploymentStore:
                 existing = self._refresh(existing)
             if existing and existing.get("state") == "running":
                 raise DeploymentError("stop the running deployment before staging a revision")
+            project_id, workflow_slug = self._deployment_owner(manifest, existing)
+            if project_id:
+                manifest = {
+                    **manifest,
+                    "project_id": project_id,
+                    "workflow_slug": workflow_slug,
+                }
             directory = self.root / deployment_id
             revision_dir = directory / "revisions" / revision
             revision_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +108,8 @@ class DeploymentStore:
                 "id": deployment_id,
                 "name": name,
                 "target_device_id": target_device_id,
+                "project_id": project_id,
+                "workflow_slug": workflow_slug,
                 "state": "staged",
                 "staged_revision": revision,
                 "active_revision": existing.get("active_revision") if existing else None,
@@ -129,6 +140,10 @@ class DeploymentStore:
             env["PYTHONUNBUFFERED"] = "1"
             env["BLACKNODE_DEPLOYMENT_ID"] = deployment_id
             env["BLACKNODE_DEPLOYMENT_REVISION"] = revision
+            if record.get("project_id"):
+                env["BLACKNODE_PROJECT_ID"] = str(record["project_id"])
+            if record.get("workflow_slug"):
+                env["BLACKNODE_WORKFLOW_SLUG"] = str(record["workflow_slug"])
             try:
                 process = subprocess.Popen(
                     [sys.executable, str(script)],
@@ -284,7 +299,45 @@ class DeploymentStore:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise DeploymentError(f"could not read deployment {deployment_id}") from exc
-        return dict(payload)
+        record = dict(payload)
+        # Additive ownership fields keep pre-0.3.8 deployment records readable
+        # and make their unassigned state explicit to API consumers.
+        record.setdefault("project_id", "")
+        record.setdefault("workflow_slug", "")
+        return record
+
+    @staticmethod
+    def _deployment_owner(
+        manifest: dict[str, Any],
+        existing: dict[str, Any] | None,
+    ) -> tuple[str, str]:
+        project_id = str(manifest.get("project_id") or "").strip()
+        workflow_slug = str(manifest.get("workflow_slug") or "").strip()
+        if bool(project_id) != bool(workflow_slug):
+            raise DeploymentError(
+                "deployment ownership requires both project_id and workflow_slug"
+            )
+        if project_id and not _PROJECT_ID_RE.fullmatch(project_id):
+            raise DeploymentError("deployment project_id is invalid")
+        if workflow_slug and not _WORKFLOW_SLUG_RE.fullmatch(workflow_slug):
+            raise DeploymentError("deployment workflow_slug is invalid")
+
+        existing_project = str((existing or {}).get("project_id") or "").strip()
+        existing_workflow = str((existing or {}).get("workflow_slug") or "").strip()
+        if project_id and existing_project and project_id != existing_project:
+            raise DeploymentError(
+                f"deployment belongs to project '{existing_project}'; "
+                "stage a new deployment to change projects"
+            )
+        if workflow_slug and existing_workflow and workflow_slug != existing_workflow:
+            raise DeploymentError(
+                f"deployment belongs to workflow '{existing_workflow}'; "
+                "stage a new deployment to change workflows"
+            )
+        return (
+            project_id or existing_project,
+            workflow_slug or existing_workflow,
+        )
 
     def _write_record(self, record: dict[str, Any]) -> None:
         self._write_json(self.root / record["id"] / "deployment.json", record)

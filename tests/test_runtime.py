@@ -97,6 +97,8 @@ def test_runtime_check_prints_deployment_owner_and_process(capsys):
             "name": "Leader live",
             "state": "running",
             "target_device_id": "leader-31481",
+            "project_id": "leader-follower-demo",
+            "workflow_slug": "leader-deploy",
             "pid": 4321,
             "active_revision": "cafebabecafebabe",
             "updated_at": "2026-07-24T23:00:00+00:00",
@@ -108,6 +110,8 @@ def test_runtime_check_prints_deployment_owner_and_process(capsys):
     assert "1 total · 1 running" in output
     assert "[RUNNING] Leader live" in output
     assert "Target robot: leader-31481" in output
+    assert "Project: leader-follower-demo" in output
+    assert "Workflow: leader-deploy" in output
     assert "PID: 4321" in output
     assert "Revision: cafebabecafebabe" in output
 
@@ -259,6 +263,93 @@ def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
         time.sleep(0.02)
     rolled_back = store.rollback("example")
     assert rolled_back["staged_revision"] == first["staged_revision"]
+
+
+def test_deployment_ownership_is_persisted_preserved_and_not_reassigned(tmp_path: Path):
+    store = DeploymentStore(tmp_path / "deployments")
+    owned = store.stage({
+        "name": "Leader",
+        "deployment_id": "leader",
+        "script": "print('owned')\n",
+        "manifest": {
+            "schema_version": 1,
+            "project_id": "leader-follower-demo",
+            "workflow_slug": "leader-deploy",
+        },
+    })
+    assert owned["project_id"] == "leader-follower-demo"
+    assert owned["workflow_slug"] == "leader-deploy"
+
+    preserved = store.stage({
+        "name": "Leader",
+        "deployment_id": "leader",
+        "script": "print('next revision')\n",
+        "manifest": {"schema_version": 1},
+    })
+    assert preserved["project_id"] == "leader-follower-demo"
+    assert preserved["workflow_slug"] == "leader-deploy"
+    revision_manifest = json.loads(
+        (
+            tmp_path
+            / "deployments"
+            / "leader"
+            / "revisions"
+            / preserved["staged_revision"]
+            / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert revision_manifest["project_id"] == "leader-follower-demo"
+    assert revision_manifest["workflow_slug"] == "leader-deploy"
+
+    with pytest.raises(DeploymentError, match="belongs to project"):
+        store.stage({
+            "name": "Leader",
+            "deployment_id": "leader",
+            "script": "print('wrong project')\n",
+            "manifest": {
+                "schema_version": 1,
+                "project_id": "another-project",
+                "workflow_slug": "leader-deploy",
+            },
+        })
+    with pytest.raises(DeploymentError, match="belongs to workflow"):
+        store.stage({
+            "name": "Leader",
+            "deployment_id": "leader",
+            "script": "print('wrong workflow')\n",
+            "manifest": {
+                "schema_version": 1,
+                "project_id": "leader-follower-demo",
+                "workflow_slug": "follower-deploy",
+            },
+        })
+
+
+def test_deployment_ownership_requires_a_valid_pair_and_legacy_is_unassigned(tmp_path: Path):
+    store = DeploymentStore(tmp_path / "deployments")
+    legacy = store.stage({
+        "name": "Legacy",
+        "script": "print('legacy')\n",
+        "manifest": {"schema_version": 1},
+    })
+    assert legacy["project_id"] == ""
+    assert legacy["workflow_slug"] == ""
+
+    with pytest.raises(DeploymentError, match="requires both"):
+        store.stage({
+            "name": "Partial",
+            "script": "print('partial')\n",
+            "manifest": {"project_id": "demo"},
+        })
+    with pytest.raises(DeploymentError, match="project_id is invalid"):
+        store.stage({
+            "name": "Invalid",
+            "script": "print('invalid')\n",
+            "manifest": {
+                "project_id": "../demo",
+                "workflow_slug": "leader",
+            },
+        })
 
 
 def test_stage_rejects_invalid_or_oversized_python(tmp_path: Path):
