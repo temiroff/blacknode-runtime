@@ -59,6 +59,16 @@ sudo systemctl restart "$unit_name"
 "$python" "$repo_dir/scripts/service_check.py" \
   --url "http://127.0.0.1:$port" --token-file "$token_file" --wait 15
 
+if [[ "${BLACKNODE_CONFIGURE_UFW:-1}" != "0" ]]; then
+  if command -v ufw >/dev/null 2>&1 \
+    && sudo ufw status 2>/dev/null | grep -qi '^Status: active'; then
+    echo "Allowing TCP port $port through UFW for Blacknode Runtime..."
+    sudo ufw allow "$port/tcp" comment "Blacknode runtime"
+  else
+    echo "UFW is inactive or unavailable; no runtime firewall rule is needed."
+  fi
+fi
+
 echo
 echo "Blacknode Runtime installed and enabled at boot."
 echo "Use ./service.sh status, restart, check, or logs."

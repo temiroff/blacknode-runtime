@@ -11,7 +11,38 @@ The runtime is separate from robot hardware and AI planning:
 
 ## Install on Ubuntu, Raspberry Pi, or Jetson
 
-Clone beside the existing hardware repository:
+For a new device, clone one repository and run the complete device installer:
+
+```bash
+git clone https://github.com/temiroff/blacknode-runtime.git
+cd blacknode-runtime
+./install-device.sh
+```
+
+The installer downloads `blacknode-hardware`, installs both Python
+environments, discovers every responding serial robot, asks for friendly robot
+names, creates one hardware service per robot, installs the shared deployment
+runtime, configures active UFW rules, and prints the editor pairing checklist.
+It is safe to rerun: existing robot identities, names, calibrations, and the
+runtime token are preserved.
+
+For an unattended two-robot setup:
+
+```bash
+./install-device.sh \
+  --name "Leader" \
+  --name "Follower" \
+  --no-prompt
+```
+
+Preview the operations without changing the device:
+
+```bash
+./install-device.sh --plan
+```
+
+Manual runtime-only installation remains available. Clone it beside an
+existing hardware repository:
 
 ```bash
 git clone https://github.com/temiroff/blacknode-runtime.git
@@ -20,7 +51,7 @@ cd blacknode-runtime
 ./install-service.sh
 ```
 
-The setup script creates `.venv`, installs Blacknode Runtime and Blacknode
+The runtime-only setup script creates `.venv`, installs Blacknode Runtime and Blacknode
 core, finds the sibling hardware pairing token, saves local configuration, and
 runs readiness checks. It never copies the token into Git or the runtime
 configuration. Linux devices with ROS 2 installed use that native graph.
@@ -78,14 +109,19 @@ sudo ufw reload
 Verify it from another computer:
 
 ```powershell
-Test-NetConnection 192.168.1.87 -Port 8766
+Test-NetConnection DEVICE_IP -Port 8766
 ```
 
 The public endpoint is:
 
 ```text
-http://192.168.1.87:8766/health
+http://DEVICE_IP:8766/health
 ```
+
+`DEVICE_IP` is discovered on each Linux computer when the pairing checklist is
+printed; it is not stored in the installer. Different computers can use
+different DHCP addresses. For a long-lived robot, configure a DHCP reservation
+in the router or use a resolvable hostname so the editor address remains stable.
 
 `/manifest` and every deployment endpoint require the runtime pairing token
 shown by `./service.sh pairing`. A single-device installation commonly shares
