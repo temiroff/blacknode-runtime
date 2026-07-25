@@ -5,6 +5,7 @@ runtime_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 hardware_dir="${BLACKNODE_HARDWARE_DIR:-$(cd -- "$runtime_dir/.." && pwd)/blacknode-hardware}"
 hardware_git_url="${BLACKNODE_HARDWARE_GIT_URL:-https://github.com/temiroff/blacknode-hardware.git}"
 plan_only=false
+stop_deployments=false
 hardware_args=()
 
 usage() {
@@ -12,12 +13,13 @@ usage() {
 Install the complete Blacknode device stack on Ubuntu, Raspberry Pi, or Jetson.
 
 Usage:
-  ./install-device.sh [--plan] [hardware discovery options]
+  ./install-device.sh [--plan] [--stop-deployments] [hardware discovery options]
 
 Examples:
   ./install-device.sh
   ./install-device.sh --servos 6
   ./install-device.sh --name "Leader" --name "Follower" --no-prompt
+  ./install-device.sh --stop-deployments
   ./install-device.sh --plan
 
 The installer:
@@ -30,6 +32,8 @@ The installer:
 
 All unrecognized options are passed to hardware discovery. Physical motion
 stays disarmed, and discovery reads servo positions without commanding motion.
+The installer refuses to interrupt running deployments unless
+--stop-deployments is explicitly provided. Stopping may release robot torque.
 
 Environment:
   BLACKNODE_HARDWARE_DIR       Existing or desired hardware checkout path
@@ -47,6 +51,9 @@ while (($#)); do
       ;;
     --plan)
       plan_only=true
+      ;;
+    --stop-deployments)
+      stop_deployments=true
       ;;
     *)
       hardware_args+=("$1")
@@ -120,7 +127,11 @@ PY
   fi
 
   runtime_port="${BLACKNODE_RUNTIME_PORT:-8766}"
-  if ! python3 - "$runtime_config" "$runtime_port" <<'PY'
+  stop_running=0
+  if [[ "$stop_deployments" == true ]]; then
+    stop_running=1
+  fi
+  if ! python3 - "$runtime_config" "$runtime_port" "$stop_running" <<'PY'
 import json
 import sys
 import urllib.error
@@ -139,6 +150,10 @@ request = urllib.request.Request(
 try:
     with urllib.request.urlopen(request, timeout=2) as response:
         payload = json.loads(response.read())
+except urllib.error.HTTPError as exc:
+    print(f"Cannot inspect running deployments: runtime returned HTTP {exc.code}.")
+    print("Repair the runtime pairing token before reinstalling device services.")
+    raise SystemExit(1)
 except (OSError, ValueError, urllib.error.URLError):
     raise SystemExit(0)
 running = [
@@ -147,11 +162,37 @@ running = [
 ]
 if not running:
     raise SystemExit(0)
+if sys.argv[3] == "1":
+    for item in running:
+        deployment_id = item.get("id")
+        name = item.get("name") or deployment_id or "Deployment"
+        if not deployment_id:
+            print(f"Cannot stop {name}: its deployment ID is missing.")
+            raise SystemExit(1)
+        print(f"Stopping {name} before device installation...")
+        stop_request = urllib.request.Request(
+            f"http://127.0.0.1:{sys.argv[2]}/deployments/{deployment_id}/stop",
+            data=b"{}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(stop_request, timeout=15) as response:
+                json.loads(response.read())
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            print(f"Could not stop {name}: {exc}")
+            raise SystemExit(1)
+    raise SystemExit(0)
 print("Stop these deployments before reinstalling device services:")
 for item in running:
     name = item.get("name") or item.get("id") or "Deployment"
     target = item.get("target_device_id") or "unassigned robot"
     print(f"  - {name} ({target})")
+print("Then rerun this installer, or explicitly use:")
+print("  ./install-device.sh --stop-deployments")
 raise SystemExit(1)
 PY
   then

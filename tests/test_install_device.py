@@ -36,3 +36,4 @@ def test_device_installer_has_valid_bash_and_help():
 
     assert "complete Blacknode device stack" in result.stdout
     assert "--plan" in result.stdout
+    assert "--stop-deployments" in result.stdout

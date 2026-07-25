@@ -41,6 +41,16 @@ Preview the operations without changing the device:
 ./install-device.sh --plan
 ```
 
+If a deployment is running, the installer makes no changes. Stop it in the
+Blacknode editor, or explicitly authorize the installer to stop every running
+deployment before continuing:
+
+```bash
+./install-device.sh --stop-deployments
+```
+
+Stopping a robot deployment may release actuator torque.
+
 Manual runtime-only installation remains available. Clone it beside an
 existing hardware repository:
 
