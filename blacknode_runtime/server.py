@@ -16,7 +16,9 @@ from .package_manager import PackageManager, PackageSyncError
 
 
 MAX_REQUEST_BYTES = 3 * 1024 * 1024
-_DEPLOYMENT_PATH = re.compile(r"^/deployments/([a-z0-9-]+)(?:/(start|stop|logs|rollback))?$")
+_DEPLOYMENT_PATH = re.compile(
+    r"^/deployments/([a-z0-9-]+)(?:/(start|stop|logs|rollback|telemetry))?$"
+)
 
 
 class RuntimeRequestHandler(BaseHTTPRequestHandler):
@@ -89,6 +91,10 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
                 query = parse_qs(urlsplit(self.path).query)
                 limit = int((query.get("limit") or ["20000"])[0])
                 self._send(200, {"id": deployment_id, "logs": self.store.logs(deployment_id, limit)})
+            elif action == "telemetry":
+                query = parse_qs(urlsplit(self.path).query)
+                stream = str((query.get("stream") or ["robot-state"])[0]).strip()
+                self._send(200, self.store.telemetry(deployment_id, stream))
             elif action is None:
                 record = self.store.get(deployment_id)
                 if record is None:

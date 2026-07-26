@@ -19,6 +19,7 @@ from blacknode_runtime.deployments import DeploymentError, DeploymentStore
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
 from blacknode_runtime.server import create_server
+from blacknode_runtime.telemetry import DeploymentTelemetryPublisher, DeploymentTelemetryReceiver
 from scripts.render_systemd_unit import render_unit
 from scripts.service_check import print_deployments
 from scripts.show_pairing import main as show_pairing
@@ -265,6 +266,79 @@ def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
     assert rolled_back["staged_revision"] == first["staged_revision"]
 
 
+def test_deployment_telemetry_bridge_reports_latest_robot_state():
+    receiver = DeploymentTelemetryReceiver("leader-live", stale_seconds=1)
+    receiver.start()
+    publisher = DeploymentTelemetryPublisher.from_env({
+        **receiver.environment(),
+        "BLACKNODE_DEPLOYMENT_ID": "leader-live",
+    })
+    try:
+        assert publisher.enabled is True
+        assert publisher.publish_robot_state(
+            {"shoulder": 12.5, "elbow": -4.0},
+            torque_enabled=True,
+        )
+        for _ in range(20):
+            sample = receiver.latest()
+            if sample["available"]:
+                break
+            time.sleep(0.01)
+        assert sample["available"] is True
+        assert sample["stale"] is False
+        assert sample["payload"]["torque_enabled"] is True
+        assert sample["payload"]["joints"] == [
+            {"name": "shoulder", "position": 12.5, "velocity": 0.0},
+            {"name": "elbow", "position": -4.0, "velocity": 0.0},
+        ]
+    finally:
+        publisher.close()
+        receiver.close()
+
+
+def test_running_deployment_can_publish_telemetry_to_store(tmp_path: Path):
+    store = DeploymentStore(tmp_path / "deployments")
+    script = """
+import json, os, socket, time
+host, port = os.environ["BLACKNODE_TELEMETRY_UDP"].rsplit(":", 1)
+message = {
+    "protocol_version": 1,
+    "token": os.environ["BLACKNODE_TELEMETRY_TOKEN"],
+    "deployment_id": os.environ["BLACKNODE_DEPLOYMENT_ID"],
+    "stream": "robot-state",
+    "sequence": 1,
+    "sent_at": "2026-07-25T00:00:00+00:00",
+    "payload": {
+        "connected": True,
+        "torque_enabled": False,
+        "position_unit": "degree",
+        "velocity_unit": "degree/s",
+        "joints": [{"name": "gripper", "position": 7.0, "velocity": 0.0}],
+    },
+}
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.sendto(json.dumps(message).encode(), (host, int(port)))
+time.sleep(1)
+"""
+    staged = store.stage({
+        "name": "Telemetry",
+        "deployment_id": "telemetry",
+        "script": script,
+    })
+    store.start(staged["id"])
+    try:
+        for _ in range(50):
+            sample = store.telemetry(staged["id"])
+            if sample["available"]:
+                break
+            time.sleep(0.02)
+        assert sample["available"] is True
+        assert sample["state"] == "running"
+        assert sample["payload"]["joints"][0]["name"] == "gripper"
+    finally:
+        store.stop_all()
+
+
 def test_deployment_ownership_is_persisted_preserved_and_not_reassigned(tmp_path: Path):
     store = DeploymentStore(tmp_path / "deployments")
     owned = store.stage({
@@ -386,6 +460,12 @@ def test_http_service_requires_auth_and_serves_manifest_and_deployments(tmp_path
         assert status == 201
         _, deployments = _request(f"{base}/deployments", token=token)
         assert [item["id"] for item in deployments["deployments"]] == [staged["id"]]
+        _, telemetry = _request(
+            f"{base}/deployments/{staged['id']}/telemetry",
+            token=token,
+        )
+        assert telemetry["available"] is False
+        assert telemetry["stream"] == "robot-state"
     finally:
         server.shutdown()
         server.server_close()

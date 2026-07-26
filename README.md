@@ -82,6 +82,25 @@ To install Blacknode core from a local checkout:
 BLACKNODE_CORE_PATH=/path/to/Blacknode ./setup_ubuntu.sh
 ```
 
+Independent runtime instances use a separate checkout and pairing token, plus
+an instance name and port. The instance name produces a distinct systemd unit
+such as `blacknode-runtime-instance-2.service`:
+
+```bash
+BLACKNODE_AUTH_TOKEN_FILE="$HOME/.blacknode/runtimes/instance-2.auth.token" \
+BLACKNODE_RUNTIME_INSTANCE=instance-2 \
+BLACKNODE_RUNTIME_PORT=8767 \
+./setup_ubuntu.sh
+
+BLACKNODE_RUNTIME_INSTANCE=instance-2 \
+BLACKNODE_RUNTIME_PORT=8767 \
+./install-service.sh
+```
+
+Pass the same `BLACKNODE_RUNTIME_INSTANCE` and `BLACKNODE_RUNTIME_PORT` values
+to `service.sh` when managing that instance. The Blacknode editor’s automatic
+SSH setup allocates these values and checks occupied ports for you.
+
 ## Check and manage the service
 
 ```bash
@@ -186,6 +205,7 @@ releases do not require a runtime update.
 | `POST` | `/deployments/{id}/start` | Explicitly start the staged revision |
 | `POST` | `/deployments/{id}/stop` | Stop the complete deployment process group |
 | `GET` | `/deployments/{id}/logs` | Read captured output |
+| `GET` | `/deployments/{id}/telemetry` | Read the latest normalized telemetry sample from the running deployment |
 | `POST` | `/deployments/{id}/rollback` | Select the previous revision, optionally start it |
 | `DELETE` | `/deployments/{id}` | Delete a stopped deployment |
 
@@ -201,6 +221,21 @@ ownership when the fields are omitted and rejects attempts to move an owned
 deployment to another project or workflow.
 
 Local state is stored under `.blacknode-runtime/` and excluded from Git.
+
+### Deployment telemetry
+
+Runtime 0.3.9 opens a loopback-only UDP receiver for each running deployment
+and passes its address plus a random per-run token through process environment
+variables. Compatible drivers publish normalized, best-effort state to that
+receiver. The runtime retains only the latest sample for each stream and
+exposes it through the authenticated deployment API; it does not persist
+telemetry or accept control messages on this channel.
+
+The `robot-state` stream carries joint position and velocity, connection and
+torque state, units, and driver errors. Future capability providers can add
+battery and camera-stream metadata through the same envelope. Image frames do
+not belong in this UDP channel; camera providers should publish a managed
+stream handle instead.
 
 ## Security
 
