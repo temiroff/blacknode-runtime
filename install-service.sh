@@ -6,7 +6,12 @@ python="$repo_dir/.venv/bin/python"
 config="${BLACKNODE_RUNTIME_CONFIG:-$repo_dir/.blacknode-runtime/runtime.json}"
 host="${BLACKNODE_RUNTIME_HOST:-0.0.0.0}"
 port="${BLACKNODE_RUNTIME_PORT:-8766}"
-unit_name="blacknode-runtime.service"
+instance="${BLACKNODE_RUNTIME_INSTANCE:-}"
+if [[ -n "$instance" && ! "$instance" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]; then
+  echo "BLACKNODE_RUNTIME_INSTANCE must contain lowercase letters, numbers, or hyphens."
+  exit 2
+fi
+unit_name="blacknode-runtime${instance:+-$instance}.service"
 unit_path="/etc/systemd/system/$unit_name"
 service_user="$(id -un)"
 print_only=false
@@ -62,13 +67,13 @@ sudo systemctl restart "$unit_name"
 if [[ "${BLACKNODE_CONFIGURE_UFW:-1}" != "0" ]]; then
   if command -v ufw >/dev/null 2>&1 \
     && sudo ufw status 2>/dev/null | grep -qi '^Status: active'; then
-    echo "Allowing TCP port $port through UFW for Blacknode Runtime..."
-    sudo ufw allow "$port/tcp" comment "Blacknode runtime"
+    echo "Allowing TCP port $port through UFW for Blacknode Runtime${instance:+ $instance}..."
+    sudo ufw allow "$port/tcp" comment "Blacknode runtime${instance:+ $instance}"
   else
     echo "UFW is inactive or unavailable; no runtime firewall rule is needed."
   fi
 fi
 
 echo
-echo "Blacknode Runtime installed and enabled at boot."
+echo "Blacknode Runtime${instance:+ $instance} installed and enabled at boot on port $port."
 echo "Use ./service.sh status, restart, check, or logs."

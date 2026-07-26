@@ -23,6 +23,7 @@ FEATURES = [
     "package_sync_v1",
     "component_sync_v1",
     "deployment_ownership_v1",
+    "deployment_telemetry_v1",
 ]
 
 

@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .telemetry import DeploymentTelemetryReceiver
+
 
 MAX_SCRIPT_BYTES = 2 * 1024 * 1024
 _ID_RE = re.compile(r"[^a-z0-9]+")
@@ -41,6 +43,7 @@ class DeploymentStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._processes: dict[str, subprocess.Popen] = {}
+        self._telemetry: dict[str, DeploymentTelemetryReceiver] = {}
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -144,7 +147,12 @@ class DeploymentStore:
                 env["BLACKNODE_PROJECT_ID"] = str(record["project_id"])
             if record.get("workflow_slug"):
                 env["BLACKNODE_WORKFLOW_SLUG"] = str(record["workflow_slug"])
+            self._close_telemetry(deployment_id)
+            telemetry: DeploymentTelemetryReceiver | None = None
             try:
+                telemetry = DeploymentTelemetryReceiver(deployment_id)
+                telemetry.start()
+                env.update(telemetry.environment())
                 process = subprocess.Popen(
                     [sys.executable, str(script)],
                     cwd=str(script.parent),
@@ -158,6 +166,8 @@ class DeploymentStore:
                     ),
                 )
             except Exception as exc:
+                if telemetry is not None:
+                    telemetry.close()
                 log.close()
                 record.update(
                     state="failed",
@@ -168,6 +178,8 @@ class DeploymentStore:
                 raise DeploymentError(record["error"]) from exc
             log.close()
             self._processes[deployment_id] = process
+            assert telemetry is not None
+            self._telemetry[deployment_id] = telemetry
             record.update(
                 state="running",
                 active_revision=revision,
@@ -185,6 +197,7 @@ class DeploymentStore:
             process = self._processes.pop(deployment_id, None)
             if process is not None and process.poll() is None:
                 self._terminate(process)
+            self._close_telemetry(deployment_id)
             record.update(
                 state="stopped",
                 pid=None,
@@ -224,6 +237,7 @@ class DeploymentStore:
             import shutil
             shutil.rmtree(self.root / deployment_id)
             self._processes.pop(deployment_id, None)
+            self._close_telemetry(deployment_id)
             return True
 
     def logs(self, deployment_id: str, limit: int = 20000) -> str:
@@ -237,18 +251,44 @@ class DeploymentStore:
                 handle.seek(max(0, size - max(512, min(limit, 200000))))
                 return handle.read().decode("utf-8", errors="replace")
 
+    def telemetry(self, deployment_id: str, stream: str = "robot-state") -> dict[str, Any]:
+        with self._lock:
+            record = self._require(deployment_id)
+            record = self._refresh(record)
+            receiver = self._telemetry.get(deployment_id)
+            if receiver is None:
+                return {
+                    "available": False,
+                    "deployment_id": deployment_id,
+                    "stream": stream,
+                    "stale": True,
+                    "state": record.get("state"),
+                    "message": (
+                        "Deployment telemetry is unavailable because the deployment is not running."
+                        if record.get("state") != "running"
+                        else "Waiting for the deployment telemetry receiver."
+                    ),
+                }
+            return {
+                "state": record.get("state"),
+                **receiver.latest(stream),
+            }
+
     def stop_all(self) -> None:
         for deployment_id in list(self._processes):
             try:
                 self.stop(deployment_id)
             except Exception:
                 pass
+        for deployment_id in list(self._telemetry):
+            self._close_telemetry(deployment_id)
 
     def _refresh(self, record: dict[str, Any]) -> dict[str, Any]:
         if record.get("state") != "running":
             return dict(record)
         process = self._processes.get(record["id"])
         if process is None:
+            self._close_telemetry(record["id"])
             record.update(
                 state="stopped",
                 pid=None,
@@ -261,6 +301,7 @@ class DeploymentStore:
         if code is None:
             return dict(record)
         self._processes.pop(record["id"], None)
+        self._close_telemetry(record["id"])
         record.update(
             state="exited" if code == 0 else "failed",
             pid=None,
@@ -270,6 +311,11 @@ class DeploymentStore:
         )
         self._write_record(record)
         return dict(record)
+
+    def _close_telemetry(self, deployment_id: str) -> None:
+        receiver = self._telemetry.pop(deployment_id, None)
+        if receiver is not None:
+            receiver.close()
 
     def _terminate(self, process: subprocess.Popen) -> None:
         try:

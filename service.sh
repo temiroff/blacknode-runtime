@@ -5,7 +5,12 @@ repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 python="$repo_dir/.venv/bin/python"
 config="${BLACKNODE_RUNTIME_CONFIG:-$repo_dir/.blacknode-runtime/runtime.json}"
 port="${BLACKNODE_RUNTIME_PORT:-8766}"
-unit_name="blacknode-runtime.service"
+instance="${BLACKNODE_RUNTIME_INSTANCE:-}"
+if [[ -n "$instance" && ! "$instance" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]; then
+  echo "BLACKNODE_RUNTIME_INSTANCE must contain lowercase letters, numbers, or hyphens."
+  exit 2
+fi
+unit_name="blacknode-runtime${instance:+-$instance}.service"
 
 usage() {
   echo "Usage: ./service.sh COMMAND"

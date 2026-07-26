@@ -24,6 +24,16 @@ def test_runtime_release_versions_match():
     assert package["package"]["version"] == __version__
 
 
+def test_runtime_service_scripts_support_isolated_instances():
+    install_service = (REPO / "install-service.sh").read_text(encoding="utf-8")
+    service = (REPO / "service.sh").read_text(encoding="utf-8")
+
+    for script in (install_service, service):
+        assert 'instance="${BLACKNODE_RUNTIME_INSTANCE:-}"' in script
+        assert 'unit_name="blacknode-runtime${instance:+-$instance}.service"' in script
+    assert 'comment "Blacknode runtime${instance:+ $instance}"' in install_service
+
+
 @pytest.mark.skipif(os.name == "nt", reason="device installer targets Linux")
 def test_device_installer_has_valid_bash_and_help():
     subprocess.run(["bash", "-n", str(INSTALLER)], check=True)
