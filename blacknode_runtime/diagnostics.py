@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -84,7 +85,7 @@ def ros2_diagnostics(
     topic_result = runner(["topic", "list", "-t"], 8.0)
     service_result = runner(["service", "list"], 8.0)
 
-    nodes = [
+    discovered_nodes = [
         line.strip()
         for line in str(node_result.get("stdout") or "").splitlines()
         if line.strip()
@@ -99,23 +100,59 @@ def ros2_diagnostics(
         for line in str(service_result.get("stdout") or "").splitlines()
         if line.strip()
     ]
-    robot_topics = sorted({
+    topic_names = sorted({
         line.split(" ", 1)[0]
         for line in topics
-        if (
-            line.split(" ", 1)[0].startswith(("/leader/", "/follower/"))
-            or line.split(" ", 1)[0].endswith(
-                ("/joint_states", "/joint_commands", "/robot_control")
-            )
-        )
+        if line.split(" ", 1)[0]
     })
-    topic_details = [
-        {
+
+    def inspect_topic(topic: str) -> dict[str, Any]:
+        return {
             "topic": topic,
             **runner(["topic", "info", topic, "--verbose"], 8.0),
         }
-        for topic in robot_topics
-    ]
+
+    # These commands only inspect discovery metadata. Run a small bounded set
+    # concurrently so a full graph snapshot remains responsive as topic count
+    # grows, while preserving deterministic topic order in the response.
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(topic_names)))) as executor:
+        topic_details = list(executor.map(inspect_topic, topic_names))
+
+    endpoint_nodes: set[str] = set()
+    endpoint_pattern = re.compile(
+        r"Node name:\s*([^\r\n]+)\r?\nNode namespace:\s*([^\r\n]+)",
+        re.IGNORECASE,
+    )
+    for detail in topic_details:
+        for node_name, namespace in endpoint_pattern.findall(
+            str(detail.get("stdout") or "")
+        ):
+            clean_namespace = namespace.strip().rstrip("/")
+            endpoint_nodes.add(
+                f"{clean_namespace}/{node_name.strip()}"
+                if clean_namespace
+                else f"/{node_name.strip()}"
+            )
+    service_counts = Counter(
+        node
+        for node in discovered_nodes
+        for service in services
+        if service == node or service.startswith(f"{node}/")
+    )
+    # The ROS CLI daemon can retain destroyed helper names. A live node should
+    # own a discovered topic endpoint or more than one node-scoped service.
+    # Only filter when verbose topic inspection returned endpoint identities;
+    # older ROS releases that omit them keep the unfiltered discovery result.
+    nodes = (
+        [
+            node
+            for node in discovered_nodes
+            if node in endpoint_nodes or service_counts[node] > 1
+        ]
+        if endpoint_nodes
+        else discovered_nodes
+    )
+    stale_nodes = sorted(set(discovered_nodes) - set(nodes))
 
     warnings: list[str] = []
     duplicates = sorted(name for name, count in Counter(nodes).items() if count > 1)
@@ -147,6 +184,7 @@ def ros2_diagnostics(
             else "ROS 2 diagnostics completed with errors."
         ),
         "nodes": nodes,
+        "stale_nodes": stale_nodes,
         "topics": topics,
         "services": services,
         "topic_details": topic_details,

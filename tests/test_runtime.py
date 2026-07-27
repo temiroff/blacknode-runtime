@@ -314,6 +314,7 @@ def test_ros2_diagnostics_reports_robot_endpoints_and_duplicate_nodes():
             stdout = (
                 "/leader/joint_states [sensor_msgs/msg/JointState]\n"
                 "/follower/robot_control [std_msgs/msg/String]\n"
+                "/rosout [rcl_interfaces/msg/Log]\n"
             )
         elif command == "service list":
             stdout = "/driver/get_parameters\n"
@@ -332,8 +333,44 @@ def test_ros2_diagnostics_reports_robot_endpoints_and_duplicate_nodes():
 
     assert result["ok"] is True
     assert result["available"] is True
-    assert len(result["topic_details"]) == 2
+    assert [detail["topic"] for detail in result["topic_details"]] == [
+        "/follower/robot_control",
+        "/leader/joint_states",
+        "/rosout",
+    ]
     assert result["warnings"] == ["Duplicate ROS 2 node names: /driver"]
+
+
+def test_ros2_diagnostics_filters_destroyed_endpointless_helper_nodes():
+    def runner(args: list[str], _timeout: float):
+        command = " ".join(args)
+        if command == "node list":
+            stdout = "/active_driver\n/blacknode_native_read_old\n"
+        elif command == "topic list -t":
+            stdout = "/robot/joint_states [sensor_msgs/msg/JointState]\n"
+        elif command == "service list":
+            stdout = "/blacknode_native_read_old/get_type_description\n"
+        else:
+            stdout = (
+                "Publisher count: 1\n\n"
+                "Node name: active_driver\n"
+                "Node namespace: /\n"
+                "Endpoint type: PUBLISHER\n\n"
+                "Subscription count: 0\n"
+            )
+        return {
+            "command": ["ros2", *args],
+            "ok": True,
+            "exit_code": 0,
+            "stdout": stdout,
+            "stderr": "",
+            "error": "",
+        }
+
+    result = ros2_diagnostics(runner)
+
+    assert result["nodes"] == ["/active_driver"]
+    assert result["stale_nodes"] == ["/blacknode_native_read_old"]
 
 
 def test_arm_control_rejects_topics_outside_the_deployment_namespace():
