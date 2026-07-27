@@ -20,6 +20,9 @@ from .telemetry import DeploymentTelemetryReceiver
 
 
 MAX_SCRIPT_BYTES = 2 * 1024 * 1024
+DEFAULT_TELEMETRY_STARTUP_GRACE_SECONDS = 15.0
+DEFAULT_TELEMETRY_STALE_FAILURE_SECONDS = 5.0
+DEFAULT_TELEMETRY_WATCHDOG_INTERVAL_SECONDS = 0.5
 _ID_RE = re.compile(r"[^a-z0-9]+")
 _PROJECT_ID_RE = re.compile(r"[a-z0-9-]{1,60}")
 _WORKFLOW_SLUG_RE = re.compile(r"[a-zA-Z0-9_-]{1,60}")
@@ -38,12 +41,39 @@ def _slug(value: str) -> str:
 
 
 class DeploymentStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        telemetry_startup_grace_seconds: float = (
+            DEFAULT_TELEMETRY_STARTUP_GRACE_SECONDS
+        ),
+        telemetry_stale_failure_seconds: float = (
+            DEFAULT_TELEMETRY_STALE_FAILURE_SECONDS
+        ),
+        telemetry_watchdog_interval_seconds: float = (
+            DEFAULT_TELEMETRY_WATCHDOG_INTERVAL_SECONDS
+        ),
+    ) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._processes: dict[str, subprocess.Popen] = {}
         self._telemetry: dict[str, DeploymentTelemetryReceiver] = {}
+        self._telemetry_started: dict[str, float] = {}
+        self._watchdogs: dict[str, threading.Timer] = {}
+        self.telemetry_startup_grace_seconds = max(
+            0.1,
+            float(telemetry_startup_grace_seconds),
+        )
+        self.telemetry_stale_failure_seconds = max(
+            0.1,
+            float(telemetry_stale_failure_seconds),
+        )
+        self.telemetry_watchdog_interval_seconds = max(
+            0.02,
+            float(telemetry_watchdog_interval_seconds),
+        )
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -120,6 +150,7 @@ class DeploymentStore:
                 "pid": None,
                 "exit_code": None,
                 "error": "",
+                "telemetry_required": bool(manifest.get("telemetry_required")),
                 "created_at": existing.get("created_at", now) if existing else now,
                 "updated_at": now,
             }
@@ -180,6 +211,7 @@ class DeploymentStore:
             self._processes[deployment_id] = process
             assert telemetry is not None
             self._telemetry[deployment_id] = telemetry
+            self._telemetry_started[deployment_id] = time.monotonic()
             record.update(
                 state="running",
                 active_revision=revision,
@@ -189,6 +221,8 @@ class DeploymentStore:
                 updated_at=_now(),
             )
             self._write_record(record)
+            if record.get("telemetry_required"):
+                self._schedule_watchdog(deployment_id)
             return dict(record)
 
     def stop(self, deployment_id: str) -> dict[str, Any]:
@@ -197,6 +231,7 @@ class DeploymentStore:
             process = self._processes.pop(deployment_id, None)
             if process is not None and process.poll() is None:
                 self._terminate(process)
+            self._cancel_watchdog(deployment_id)
             self._close_telemetry(deployment_id)
             record.update(
                 state="stopped",
@@ -282,12 +317,15 @@ class DeploymentStore:
                 pass
         for deployment_id in list(self._telemetry):
             self._close_telemetry(deployment_id)
+        for deployment_id in list(self._watchdogs):
+            self._cancel_watchdog(deployment_id)
 
     def _refresh(self, record: dict[str, Any]) -> dict[str, Any]:
         if record.get("state") != "running":
             return dict(record)
         process = self._processes.get(record["id"])
         if process is None:
+            self._cancel_watchdog(record["id"])
             self._close_telemetry(record["id"])
             record.update(
                 state="stopped",
@@ -299,8 +337,23 @@ class DeploymentStore:
             return dict(record)
         code = process.poll()
         if code is None:
+            telemetry_failure = self._telemetry_failure(record)
+            if telemetry_failure:
+                self._processes.pop(record["id"], None)
+                self._terminate(process)
+                self._cancel_watchdog(record["id"])
+                self._close_telemetry(record["id"])
+                record.update(
+                    state="failed",
+                    pid=None,
+                    exit_code=process.poll(),
+                    error=telemetry_failure,
+                    updated_at=_now(),
+                )
+                self._write_record(record)
             return dict(record)
         self._processes.pop(record["id"], None)
+        self._cancel_watchdog(record["id"])
         self._close_telemetry(record["id"])
         record.update(
             state="exited" if code == 0 else "failed",
@@ -314,8 +367,60 @@ class DeploymentStore:
 
     def _close_telemetry(self, deployment_id: str) -> None:
         receiver = self._telemetry.pop(deployment_id, None)
+        self._telemetry_started.pop(deployment_id, None)
         if receiver is not None:
             receiver.close()
+
+    def _telemetry_failure(self, record: dict[str, Any]) -> str:
+        if not bool(record.get("telemetry_required")):
+            return ""
+        deployment_id = str(record.get("id") or "")
+        receiver = self._telemetry.get(deployment_id)
+        started = self._telemetry_started.get(deployment_id)
+        if receiver is None or started is None:
+            return "required robot telemetry receiver is unavailable"
+        sample = receiver.latest()
+        if not sample.get("available"):
+            age = max(0.0, time.monotonic() - started)
+            if age > self.telemetry_startup_grace_seconds:
+                return (
+                    "required robot telemetry did not start within "
+                    f"{self.telemetry_startup_grace_seconds:g}s"
+                )
+            return ""
+        age = float(sample.get("age_seconds") or 0.0)
+        if age > self.telemetry_stale_failure_seconds:
+            return (
+                "required robot telemetry became stale "
+                f"({age:.2f}s without a fresh sample)"
+            )
+        return ""
+
+    def _schedule_watchdog(self, deployment_id: str) -> None:
+        self._cancel_watchdog(deployment_id)
+        timer = threading.Timer(
+            self.telemetry_watchdog_interval_seconds,
+            self._watchdog_tick,
+            args=(deployment_id,),
+        )
+        timer.daemon = True
+        self._watchdogs[deployment_id] = timer
+        timer.start()
+
+    def _cancel_watchdog(self, deployment_id: str) -> None:
+        timer = self._watchdogs.pop(deployment_id, None)
+        if timer is not None and timer is not threading.current_thread():
+            timer.cancel()
+
+    def _watchdog_tick(self, deployment_id: str) -> None:
+        with self._lock:
+            self._watchdogs.pop(deployment_id, None)
+            record = self._read(deployment_id)
+            if record is None:
+                return
+            refreshed = self._refresh(record)
+            if refreshed.get("state") == "running":
+                self._schedule_watchdog(deployment_id)
 
     def _terminate(self, process: subprocess.Popen) -> None:
         try:
@@ -350,6 +455,7 @@ class DeploymentStore:
         # and make their unassigned state explicit to API consumers.
         record.setdefault("project_id", "")
         record.setdefault("workflow_slug", "")
+        record.setdefault("telemetry_required", False)
         return record
 
     @staticmethod

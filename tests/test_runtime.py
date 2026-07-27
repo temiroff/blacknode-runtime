@@ -339,6 +339,104 @@ time.sleep(1)
         store.stop_all()
 
 
+def test_required_robot_telemetry_must_start_or_deployment_fails(tmp_path: Path):
+    store = DeploymentStore(
+        tmp_path / "deployments",
+        telemetry_startup_grace_seconds=0.12,
+        telemetry_stale_failure_seconds=0.12,
+        telemetry_watchdog_interval_seconds=0.02,
+    )
+    staged = store.stage({
+        "name": "Missing telemetry",
+        "deployment_id": "missing-telemetry",
+        "script": "import time\ntime.sleep(10)\n",
+        "manifest": {
+            "schema_version": 1,
+            "telemetry_required": True,
+        },
+    })
+    store.start(staged["id"])
+    try:
+        for _ in range(100):
+            result = store.get(staged["id"])
+            if result["state"] != "running":
+                break
+            time.sleep(0.02)
+        assert result["state"] == "failed"
+        assert result["pid"] is None
+        assert result["exit_code"] is not None
+        assert "telemetry did not start" in result["error"]
+    finally:
+        store.stop_all()
+
+
+def test_required_robot_telemetry_must_remain_fresh(tmp_path: Path):
+    store = DeploymentStore(
+        tmp_path / "deployments",
+        telemetry_startup_grace_seconds=0.5,
+        telemetry_stale_failure_seconds=0.12,
+        telemetry_watchdog_interval_seconds=0.02,
+    )
+    script = """
+import json, os, socket, time
+host, port = os.environ["BLACKNODE_TELEMETRY_UDP"].rsplit(":", 1)
+message = {
+    "protocol_version": 1,
+    "token": os.environ["BLACKNODE_TELEMETRY_TOKEN"],
+    "deployment_id": os.environ["BLACKNODE_DEPLOYMENT_ID"],
+    "stream": "robot-state",
+    "sequence": 1,
+    "sent_at": "2026-07-25T00:00:00+00:00",
+    "payload": {"connected": True, "torque_enabled": False, "joints": []},
+}
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.sendto(json.dumps(message).encode(), (host, int(port)))
+time.sleep(10)
+"""
+    staged = store.stage({
+        "name": "Stale telemetry",
+        "deployment_id": "stale-telemetry",
+        "script": script,
+        "manifest": {
+            "schema_version": 1,
+            "telemetry_required": True,
+        },
+    })
+    store.start(staged["id"])
+    try:
+        for _ in range(100):
+            result = store.get(staged["id"])
+            if result["state"] != "running":
+                break
+            time.sleep(0.02)
+        assert result["state"] == "failed"
+        assert "telemetry became stale" in result["error"]
+    finally:
+        store.stop_all()
+
+
+def test_non_robot_deployment_does_not_require_telemetry(tmp_path: Path):
+    store = DeploymentStore(
+        tmp_path / "deployments",
+        telemetry_startup_grace_seconds=0.1,
+        telemetry_watchdog_interval_seconds=0.02,
+    )
+    staged = store.stage({
+        "name": "Compute only",
+        "deployment_id": "compute-only",
+        "script": "import time\ntime.sleep(10)\n",
+        "manifest": {"schema_version": 1},
+    })
+    store.start(staged["id"])
+    try:
+        time.sleep(0.2)
+        result = store.get(staged["id"])
+        assert result["state"] == "running"
+        assert result["telemetry_required"] is False
+    finally:
+        store.stop_all()
+
+
 def test_deployment_ownership_is_persisted_preserved_and_not_reassigned(tmp_path: Path):
     store = DeploymentStore(tmp_path / "deployments")
     owned = store.stage({

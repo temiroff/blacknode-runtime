@@ -242,6 +242,13 @@ battery and camera-stream metadata through the same envelope. Image frames do
 not belong in this UDP channel; camera providers should publish a managed
 stream handle instead.
 
+Runtime 0.3.11 supervises deployments whose manifest sets
+`telemetry_required=true`. A robot deployment gets a bounded startup grace
+period to publish its first state. Missing or stale state fails the deployment
+and terminates its complete process group, allowing the Hardware service to
+reclaim the device instead of leaving a stale deployment marked running.
+Compute-only deployments do not require robot telemetry.
+
 ## Security
 
 The deployment API can execute authenticated Python artifacts. Keep port 8766

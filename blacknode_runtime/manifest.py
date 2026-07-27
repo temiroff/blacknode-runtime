@@ -24,6 +24,7 @@ FEATURES = [
     "component_sync_v1",
     "deployment_ownership_v1",
     "deployment_telemetry_v1",
+    "required_telemetry_watchdog_v1",
 ]
 
 
