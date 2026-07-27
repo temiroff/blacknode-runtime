@@ -273,6 +273,12 @@ bounded so larger graphs remain responsive. Discovered node names are checked
 against live topic endpoints and service ownership so destroyed helper nodes
 retained by the ROS CLI cache are not reported as active.
 
+Runtime 0.3.15 lets an authenticated package sync explicitly fast-forward
+already-installed extension packages even when their declared version has not
+changed. Managed Runtime updates use this to refresh workflow packages before
+the device returns online, so restarted deployments do not retain old package
+code under a current Runtime service.
+
 ROS 2 diagnostics are authenticated and read-only. They run a fixed set of
 discovery commands and never publish a message or expose a general-purpose
 remote shell.

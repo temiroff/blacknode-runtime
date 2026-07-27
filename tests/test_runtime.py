@@ -231,6 +231,59 @@ def test_package_sync_activates_declared_components_and_adapters(
     ]
 
 
+def test_package_sync_update_refreshes_existing_package_at_same_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import blacknode.packages as packages
+
+    manager = PackageManager(tmp_path / "packages")
+    package_dir = manager.root / "blacknode-skills"
+    package_dir.mkdir()
+    (package_dir / "blacknode-package.toml").write_text(
+        "[package]\n"
+        'name = "blacknode-skills"\n'
+        'version = "0.2.3"\n'
+        'description = "Skills"\n'
+        'requires-blacknode = ">=0.3.0"\n',
+        encoding="utf-8",
+    )
+    info = SimpleNamespace(
+        name="blacknode-skills",
+        version="0.2.3",
+        node_types=["ROS2LeaderFollower"],
+        ok=True,
+        error="",
+    )
+    monkeypatch.setattr(packages, "load_package", lambda _path: info)
+    monkeypatch.setattr(
+        packages,
+        "install_prerequisites",
+        lambda _path, **_kwargs: None,
+    )
+    refreshed = []
+    monkeypatch.setattr(
+        manager,
+        "_update_existing",
+        lambda name, path, target, messages: refreshed.append(
+            (name, path, target)
+        ),
+    )
+
+    result = manager.sync({
+        "packages": [{
+            "name": "blacknode-skills",
+            "git_url": "https://github.com/temiroff/blacknode-skills.git",
+            "update": True,
+        }],
+    })
+
+    assert refreshed == [
+        ("blacknode-skills", package_dir, "latest revision"),
+    ]
+    assert result["already_present"][0]["version"] == "0.2.3"
+
+
 def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
     store = DeploymentStore(tmp_path / "deployments")
     first = store.stage({
