@@ -11,13 +11,14 @@ from urllib.parse import parse_qs, urlsplit
 from .auth import authorization_matches
 from .config import RuntimeConfig
 from .deployments import DeploymentError, DeploymentStore
+from .diagnostics import ros2_diagnostics
 from .manifest import runtime_manifest
 from .package_manager import PackageManager, PackageSyncError
 
 
-MAX_REQUEST_BYTES = 3 * 1024 * 1024
+MAX_REQUEST_BYTES = 5 * 1024 * 1024
 _DEPLOYMENT_PATH = re.compile(
-    r"^/deployments/([a-z0-9-]+)(?:/(start|stop|logs|rollback|telemetry))?$"
+    r"^/deployments/([a-z0-9-]+)(?:/(start|stop|logs|rollback|telemetry|workflow|control))?$"
 )
 
 
@@ -54,7 +55,7 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             raise DeploymentError("invalid Content-Length") from exc
         if length <= 0 or length > MAX_REQUEST_BYTES:
-            raise DeploymentError("request body is empty or exceeds the 3 MB limit")
+            raise DeploymentError("request body is empty or exceeds the 5 MB limit")
         try:
             payload = json.loads(self.rfile.read(length))
         except json.JSONDecodeError as exc:
@@ -81,6 +82,9 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
         if path == "/deployments":
             self._send(200, {"deployments": self.store.list()})
             return
+        if path == "/diagnostics/ros2":
+            self._send(200, ros2_diagnostics())
+            return
         match = _DEPLOYMENT_PATH.fullmatch(path)
         if not match:
             self._send(404, {"ok": False, "error": "not found"})
@@ -95,6 +99,10 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
                 query = parse_qs(urlsplit(self.path).query)
                 stream = str((query.get("stream") or ["robot-state"])[0]).strip()
                 self._send(200, self.store.telemetry(deployment_id, stream))
+            elif action == "workflow":
+                query = parse_qs(urlsplit(self.path).query)
+                revision = str((query.get("revision") or [""])[0]).strip()
+                self._send(200, self.store.workflow(deployment_id, revision))
             elif action is None:
                 record = self.store.get(deployment_id)
                 if record is None:
@@ -134,6 +142,16 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
                 result = self.store.stop(deployment_id)
             elif action == "rollback":
                 result = self.store.rollback(deployment_id, start=bool(payload.get("start")))
+            elif action == "control":
+                command = str(payload.get("command") or "").strip().lower()
+                if command not in {"arm", "disarm"}:
+                    raise DeploymentError(
+                        "deployment control command must be arm or disarm"
+                    )
+                result = self.store.set_motion_armed(
+                    deployment_id,
+                    command == "arm",
+                )
             else:
                 self._send(405, {"ok": False, "error": "method not allowed"})
                 return

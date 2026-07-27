@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -16,10 +17,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .diagnostics import is_ros2_armed_control_topic, publish_ros2_armed_control
 from .telemetry import DeploymentTelemetryReceiver
 
 
 MAX_SCRIPT_BYTES = 2 * 1024 * 1024
+MAX_WORKFLOW_BYTES = 2 * 1024 * 1024
 DEFAULT_TELEMETRY_STARTUP_GRACE_SECONDS = 15.0
 DEFAULT_TELEMETRY_STALE_FAILURE_SECONDS = 5.0
 DEFAULT_TELEMETRY_WATCHDOG_INTERVAL_SECONDS = 0.5
@@ -106,6 +109,9 @@ class DeploymentStore:
         manifest = payload.get("manifest") or {}
         if not isinstance(manifest, dict):
             raise DeploymentError("deployment manifest must be an object")
+        workflow = payload.get("workflow")
+        if workflow is not None:
+            self._validate_workflow_snapshot(workflow)
 
         requested_id = str(payload.get("deployment_id") or "").strip()
         deployment_id = _slug(requested_id) if requested_id else f"{_slug(name)}-{uuid.uuid4().hex[:8]}"
@@ -128,6 +134,8 @@ class DeploymentStore:
             revision_dir.mkdir(parents=True, exist_ok=True)
             self._write_text(revision_dir / "main.py", script)
             self._write_json(revision_dir / "manifest.json", manifest)
+            if workflow is not None:
+                self._write_json(revision_dir / "workflow.json", workflow)
             now = _now()
             revisions = list(existing.get("revisions", [])) if existing else []
             if revision not in revisions:
@@ -151,11 +159,130 @@ class DeploymentStore:
                 "exit_code": None,
                 "error": "",
                 "telemetry_required": bool(manifest.get("telemetry_required")),
+                "motion_control_count": len([
+                    item
+                    for item in (manifest.get("motion_controls") or [])
+                    if (
+                        isinstance(item, dict)
+                        and item.get("kind") == "ros2_leader_follower"
+                        and is_ros2_armed_control_topic(str(item.get("topic") or ""))
+                    )
+                ]),
+                "motion_armed": False,
                 "created_at": existing.get("created_at", now) if existing else now,
                 "updated_at": now,
             }
             self._write_record(record)
             return dict(record)
+
+    def workflow(
+        self,
+        deployment_id: str,
+        revision: str = "",
+    ) -> dict[str, Any]:
+        """Return the graph captured for a revision.
+
+        Runtime 0.3.13+ stores ``workflow.json`` alongside the generated
+        script. Older Blacknode exports embedded the same graph in the
+        literal ``_WORKFLOW`` assignment, so they remain recoverable without
+        executing deployment code.
+        """
+        with self._lock:
+            record = self._require(deployment_id)
+            selected_revision = str(
+                revision
+                or (
+                    record.get("active_revision")
+                    if record.get("state") == "running"
+                    else record.get("staged_revision")
+                )
+                or record.get("active_revision")
+                or ""
+            ).strip()
+            if not selected_revision or selected_revision not in record.get("revisions", []):
+                raise DeploymentError("deployment revision was not found")
+            revision_dir = self.root / deployment_id / "revisions" / selected_revision
+            workflow_path = revision_dir / "workflow.json"
+            if workflow_path.is_file():
+                try:
+                    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise DeploymentError("could not read deployment workflow snapshot") from exc
+                source = "snapshot"
+            else:
+                script_path = revision_dir / "main.py"
+                workflow = self._workflow_from_generated_script(script_path)
+                source = "generated_script"
+            self._validate_workflow_snapshot(workflow)
+            return {
+                "id": deployment_id,
+                "revision": selected_revision,
+                "source": source,
+                "workflow": workflow,
+            }
+
+    def set_motion_armed(
+        self,
+        deployment_id: str,
+        armed: bool,
+    ) -> dict[str, Any]:
+        """Send one arm-state command to a running deployment's declared gate."""
+        with self._lock:
+            record = self._refresh(self._require(deployment_id))
+            if record.get("state") != "running":
+                raise DeploymentError("deployment must be running before it can be armed")
+            revision = str(record.get("active_revision") or "").strip()
+            manifest_path = (
+                self.root
+                / deployment_id
+                / "revisions"
+                / revision
+                / "manifest.json"
+            )
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise DeploymentError("could not read deployment motion controls") from exc
+            controls = [
+                item
+                for item in (manifest.get("motion_controls") or [])
+                if (
+                    isinstance(item, dict)
+                    and item.get("kind") == "ros2_leader_follower"
+                    and is_ros2_armed_control_topic(str(item.get("topic") or ""))
+                )
+            ]
+            if not controls:
+                raise DeploymentError(
+                    "deployment has no remotely controllable armed gate; stage it again"
+                )
+            if len(controls) != 1:
+                raise DeploymentError(
+                    "deployment has multiple armed gates; control them from their workflow nodes"
+                )
+            control = controls[0]
+            result = publish_ros2_armed_control(
+                str(control["topic"]),
+                bool(armed),
+            )
+            if not result.get("ok"):
+                raise DeploymentError(
+                    "deployment arm command failed: "
+                    + str(result.get("error") or result.get("stderr") or "unknown ROS 2 error")
+                )
+            record.update(
+                motion_armed=bool(armed),
+                updated_at=_now(),
+            )
+            self._write_record(record)
+            return {
+                "ok": True,
+                "id": deployment_id,
+                "armed": bool(armed),
+                "topic": str(control["topic"]),
+                "node_id": str(control.get("node_id") or ""),
+                "deployment": dict(record),
+            }
 
     def start(self, deployment_id: str) -> dict[str, Any]:
         with self._lock:
@@ -260,6 +387,7 @@ class DeploymentStore:
             record.update(
                 state="stopped",
                 pid=None,
+                motion_armed=False,
                 exit_code=process.poll() if process is not None else record.get("exit_code"),
                 updated_at=_now(),
             )
@@ -354,6 +482,7 @@ class DeploymentStore:
             record.update(
                 state="stopped",
                 pid=None,
+                motion_armed=False,
                 error="runtime restarted; deployment must be started again",
                 updated_at=_now(),
             )
@@ -370,6 +499,7 @@ class DeploymentStore:
                 record.update(
                     state="failed",
                     pid=None,
+                    motion_armed=False,
                     exit_code=process.poll(),
                     error=telemetry_failure,
                     updated_at=_now(),
@@ -382,6 +512,7 @@ class DeploymentStore:
         record.update(
             state="exited" if code == 0 else "failed",
             pid=None,
+            motion_armed=False,
             exit_code=code,
             error="" if code == 0 else f"deployment exited with code {code}",
             updated_at=_now(),
@@ -481,6 +612,8 @@ class DeploymentStore:
         record.setdefault("workflow_slug", "")
         record.setdefault("telemetry_required", False)
         record.setdefault("superseded_deployment_ids", [])
+        record.setdefault("motion_armed", False)
+        record.setdefault("motion_control_count", 0)
         return record
 
     @staticmethod
@@ -518,6 +651,58 @@ class DeploymentStore:
 
     def _write_record(self, record: dict[str, Any]) -> None:
         self._write_json(self.root / record["id"] / "deployment.json", record)
+
+    @staticmethod
+    def _validate_workflow_snapshot(workflow: Any) -> None:
+        if not isinstance(workflow, dict):
+            raise DeploymentError("deployment workflow must be an object")
+        if workflow.get("kind") != "blacknode.workflow":
+            raise DeploymentError("deployment workflow kind must be blacknode.workflow")
+        if workflow.get("schema_version") != 1:
+            raise DeploymentError("deployment workflow schema_version must be 1")
+        if not isinstance(workflow.get("node_meta"), dict):
+            raise DeploymentError("deployment workflow node_meta must be an object")
+        if not isinstance(workflow.get("edges"), list):
+            raise DeploymentError("deployment workflow edges must be a list")
+        try:
+            encoded = json.dumps(workflow, ensure_ascii=False).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise DeploymentError("deployment workflow must be JSON serializable") from exc
+        if len(encoded) > MAX_WORKFLOW_BYTES:
+            raise DeploymentError("deployment workflow exceeds the 2 MB limit")
+
+    @staticmethod
+    def _workflow_from_generated_script(path: Path) -> dict[str, Any]:
+        if not path.is_file():
+            raise DeploymentError("deployment script was not found")
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename="main.py")
+        except (OSError, SyntaxError) as exc:
+            raise DeploymentError("could not inspect the generated deployment script") from exc
+        for statement in tree.body:
+            if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+            )
+            if not any(
+                isinstance(target, ast.Name) and target.id == "_WORKFLOW"
+                for target in targets
+            ):
+                continue
+            try:
+                value = ast.literal_eval(statement.value)
+            except (TypeError, ValueError) as exc:
+                raise DeploymentError(
+                    "the generated deployment script has no readable workflow snapshot"
+                ) from exc
+            if isinstance(value, dict):
+                return value
+        raise DeploymentError(
+            "this deployment predates recoverable workflow snapshots; stage it again"
+        )
 
     @staticmethod
     def _write_text(path: Path, value: str) -> None:
