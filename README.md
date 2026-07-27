@@ -267,6 +267,12 @@ The workflow endpoint also safely recovers the `_WORKFLOW` literal embedded in
 generated scripts from earlier Runtime versions, so those deployments can be
 opened as editable graphs again.
 
+Runtime 0.3.14 includes endpoint counts for every discovered ROS 2 topic in
+the authenticated diagnostics snapshot. Topic inspection is read-only and
+bounded so larger graphs remain responsive. Discovered node names are checked
+against live topic endpoints and service ownership so destroyed helper nodes
+retained by the ROS CLI cache are not reported as active.
+
 ROS 2 diagnostics are authenticated and read-only. They run a fixed set of
 discovery commands and never publish a message or expose a general-purpose
 remote shell.
