@@ -121,7 +121,7 @@ class PackageManager:
 
     def _load_existing(
         self,
-        spec: dict[str, str],
+        spec: dict[str, Any],
         package_dir: Path,
         messages: list[str],
     ):
@@ -139,8 +139,12 @@ class PackageManager:
                 f"package folder {name} declares a different name: {info.name}"
             )
         requested_version = spec.get("version", "")
-        if requested_version and info.version != requested_version:
-            self._update_existing(name, package_dir, requested_version, messages)
+        update_requested = bool(spec.get("update"))
+        if update_requested or (
+            requested_version and info.version != requested_version
+        ):
+            update_target = requested_version or "latest revision"
+            self._update_existing(name, package_dir, update_target, messages)
             install_prerequisites(package_dir, progress=messages.append)
             info = load_package(package_dir)
         elif not info.ok:
@@ -245,12 +249,15 @@ class PackageManager:
         name = str(value.get("name") or "").strip().lower()
         source = str(value.get("git_url") or value.get("source") or "").strip()
         version = str(value.get("version") or "").strip()
+        update = value.get("update", False)
         if not _PACKAGE_NAME_RE.fullmatch(name):
             raise PackageSyncError(f"invalid package name: {name or '(empty)'}")
         if not source:
             raise PackageSyncError(f"{name} has no package source")
         if len(version) > 64 or any(character.isspace() for character in version):
             raise PackageSyncError(f"{name} has an invalid requested version")
+        if not isinstance(update, bool):
+            raise PackageSyncError(f"{name} update must be a boolean")
 
         parsed = urlsplit(source)
         if parsed.scheme != "https" or not parsed.hostname:
@@ -294,6 +301,7 @@ class PackageManager:
             "name": name,
             "source": source,
             "version": version,
+            "update": update,
             "components": components,
             "adapters": [
                 {"component": component, "adapter": adapter}
