@@ -25,6 +25,7 @@ FEATURES = [
     "deployment_ownership_v1",
     "deployment_telemetry_v1",
     "required_telemetry_watchdog_v1",
+    "single_target_deployment_v1",
 ]
 
 

@@ -161,12 +161,35 @@ class DeploymentStore:
         with self._lock:
             record = self._require(deployment_id)
             record = self._refresh(record)
-            if record.get("state") == "running":
-                return record
             revision = str(record.get("staged_revision") or "")
             script = self.root / deployment_id / "revisions" / revision / "main.py"
             if not revision or not script.is_file():
                 raise DeploymentError("deployment has no staged revision")
+            target_device_id = str(record.get("target_device_id") or "").strip()
+            superseded_deployment_ids: list[str] = []
+            if target_device_id:
+                for path in sorted(self.root.glob("*/deployment.json")):
+                    other_id = path.parent.name
+                    if other_id == deployment_id:
+                        continue
+                    other = self._read(other_id)
+                    if other is None:
+                        continue
+                    other = self._refresh(other)
+                    if (
+                        other.get("state") == "running"
+                        and str(other.get("target_device_id") or "").strip()
+                        == target_device_id
+                    ):
+                        self.stop(other_id)
+                        superseded_deployment_ids.append(other_id)
+            if record.get("state") == "running":
+                record.update(
+                    superseded_deployment_ids=superseded_deployment_ids,
+                    updated_at=_now(),
+                )
+                self._write_record(record)
+                return dict(record)
             log_path = self.root / deployment_id / "deployment.log"
             log = open(log_path, "ab", buffering=0)
             log.write(f"\n=== {_now()} starting {deployment_id}@{revision} ===\n".encode())
@@ -218,6 +241,7 @@ class DeploymentStore:
                 pid=process.pid,
                 exit_code=None,
                 error="",
+                superseded_deployment_ids=superseded_deployment_ids,
                 updated_at=_now(),
             )
             self._write_record(record)
@@ -456,6 +480,7 @@ class DeploymentStore:
         record.setdefault("project_id", "")
         record.setdefault("workflow_slug", "")
         record.setdefault("telemetry_required", False)
+        record.setdefault("superseded_deployment_ids", [])
         return record
 
     @staticmethod
