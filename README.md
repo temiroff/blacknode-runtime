@@ -218,6 +218,12 @@ Staging and starting are separate operations. A staged workflow cannot move
 hardware until it is explicitly started and then passes the hardware service's
 own calibration, freshness, limits, and authorization checks.
 
+Each target robot has one running deployment owner. Starting a staged
+deployment stops the complete process group of any other running deployment
+whose manifest names the same `target_device_id`. The start response records
+those deployment IDs in `superseded_deployment_ids`, allowing the editor to
+remove their stopped records after the replacement starts successfully.
+
 Deployment manifests can include `project_id` and `workflow_slug`. The runtime
 persists both values on the deployment record and exposes them from every
 deployment endpoint. Existing records without these fields remain valid and
@@ -248,6 +254,10 @@ period to publish its first state. Missing or stale state fails the deployment
 and terminates its complete process group, allowing the Hardware service to
 reclaim the device instead of leaving a stale deployment marked running.
 Compute-only deployments do not require robot telemetry.
+
+Runtime 0.3.12 serializes deployment ownership per `target_device_id`. Starting
+a replacement stops every older process group for that robot before launching
+the new revision.
 
 ## Security
 

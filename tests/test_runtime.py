@@ -266,6 +266,39 @@ def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
     assert rolled_back["staged_revision"] == first["staged_revision"]
 
 
+def test_start_replaces_every_running_deployment_for_same_target(tmp_path: Path):
+    store = DeploymentStore(tmp_path / "deployments")
+    first = store.stage({
+        "name": "Follower old",
+        "deployment_id": "follower-old",
+        "script": "import time\ntime.sleep(10)\n",
+        "manifest": {"schema_version": 1, "target_device_id": "follower-device"},
+    })
+    unrelated = store.stage({
+        "name": "Leader",
+        "deployment_id": "leader",
+        "script": "import time\ntime.sleep(10)\n",
+        "manifest": {"schema_version": 1, "target_device_id": "leader-device"},
+    })
+    replacement = store.stage({
+        "name": "Follower replacement",
+        "deployment_id": "follower-replacement",
+        "script": "import time\ntime.sleep(10)\n",
+        "manifest": {"schema_version": 1, "target_device_id": "follower-device"},
+    })
+    store.start(first["id"])
+    store.start(unrelated["id"])
+    try:
+        running = store.start(replacement["id"])
+
+        assert running["state"] == "running"
+        assert running["superseded_deployment_ids"] == ["follower-old"]
+        assert store.get(first["id"])["state"] == "stopped"
+        assert store.get(unrelated["id"])["state"] == "running"
+    finally:
+        store.stop_all()
+
+
 def test_deployment_telemetry_bridge_reports_latest_robot_state():
     receiver = DeploymentTelemetryReceiver("leader-live", stale_seconds=1)
     receiver.start()
