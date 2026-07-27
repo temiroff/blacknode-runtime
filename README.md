@@ -245,11 +245,12 @@ receiver. The runtime retains only the latest sample for each stream and
 exposes it through the authenticated deployment API; it does not persist
 telemetry or accept control messages on this channel.
 
-The `robot-state` stream carries joint position and velocity, connection and
-torque state, units, and driver errors. Future capability providers can add
-battery and camera-stream metadata through the same envelope. Image frames do
-not belong in this UDP channel; camera providers should publish a managed
-stream handle instead.
+The `robot-state` stream carries joint position and velocity, optional joint
+limits, connection and torque state, units, and driver errors. Monitor charts
+use valid joint limits as their stable physical scale. Future capability
+providers can add battery and camera-stream metadata through the same envelope.
+Image frames do not belong in this UDP channel; camera providers should publish
+a managed stream handle instead.
 
 Runtime 0.3.11 supervises deployments whose manifest sets
 `telemetry_required=true`. A robot deployment gets a bounded startup grace
