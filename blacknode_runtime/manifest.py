@@ -26,6 +26,9 @@ FEATURES = [
     "deployment_telemetry_v1",
     "required_telemetry_watchdog_v1",
     "single_target_deployment_v1",
+    "deployment_workflow_v1",
+    "deployment_motion_control_v1",
+    "ros2_diagnostics_v1",
 ]
 
 

@@ -211,8 +211,11 @@ releases do not require a runtime update.
 | `POST` | `/deployments/{id}/stop` | Stop the complete deployment process group |
 | `GET` | `/deployments/{id}/logs` | Read captured output |
 | `GET` | `/deployments/{id}/telemetry` | Read the latest normalized telemetry sample from the running deployment |
+| `GET` | `/deployments/{id}/workflow` | Load the typed graph captured for the active or staged revision |
+| `POST` | `/deployments/{id}/control` | Explicitly arm or disarm one declared deployment motion gate |
 | `POST` | `/deployments/{id}/rollback` | Select the previous revision, optionally start it |
 | `DELETE` | `/deployments/{id}` | Delete a stopped deployment |
+| `GET` | `/diagnostics/ros2` | Read ROS 2 nodes, topics, services, and robot-topic endpoint details |
 
 Staging and starting are separate operations. A staged workflow cannot move
 hardware until it is explicitly started and then passes the hardware service's
@@ -258,6 +261,20 @@ Compute-only deployments do not require robot telemetry.
 Runtime 0.3.12 serializes deployment ownership per `target_device_id`. Starting
 a replacement stops every older process group for that robot before launching
 the new revision.
+
+Runtime 0.3.13 stores the typed workflow snapshot beside every staged revision.
+The workflow endpoint also safely recovers the `_WORKFLOW` literal embedded in
+generated scripts from earlier Runtime versions, so those deployments can be
+opened as editable graphs again.
+
+ROS 2 diagnostics are authenticated and read-only. They run a fixed set of
+discovery commands and never publish a message or expose a general-purpose
+remote shell.
+
+Deployment motion control accepts only `arm` and `disarm`. It publishes to the
+fixed controller topic declared by the staged workflow, rejects deployments
+with no declared gate or multiple gates, and resets to disarmed whenever the
+deployment stops, exits, fails, or the Runtime restarts.
 
 ## Security
 

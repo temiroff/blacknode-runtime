@@ -13,9 +13,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from blacknode_runtime import deployments as deployment_module
 from blacknode_runtime.auth import load_auth_token, token_fingerprint
 from blacknode_runtime.config import RuntimeConfig
 from blacknode_runtime.deployments import DeploymentError, DeploymentStore
+from blacknode_runtime.diagnostics import publish_ros2_armed_control, ros2_diagnostics
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
 from blacknode_runtime.server import create_server
@@ -264,6 +266,125 @@ def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
         time.sleep(0.02)
     rolled_back = store.rollback("example")
     assert rolled_back["staged_revision"] == first["staged_revision"]
+
+
+def test_deployment_workflow_snapshot_and_legacy_export_recovery(tmp_path: Path):
+    store = DeploymentStore(tmp_path / "deployments")
+    workflow = {
+        "kind": "blacknode.workflow",
+        "schema_version": 1,
+        "name": "Recoverable",
+        "node_meta": {},
+        "edges": [],
+    }
+    staged = store.stage({
+        "name": "Snapshot",
+        "deployment_id": "snapshot",
+        "script": "print('snapshot')\n",
+        "workflow": workflow,
+    })
+    captured = store.workflow(staged["id"])
+    assert captured["source"] == "snapshot"
+    assert captured["workflow"] == workflow
+
+    legacy = store.stage({
+        "name": "Legacy export",
+        "deployment_id": "legacy-export",
+        "script": f"_WORKFLOW = {workflow!r}\nprint('legacy')\n",
+    })
+    recovered = store.workflow(legacy["id"])
+    assert recovered["source"] == "generated_script"
+    assert recovered["workflow"] == workflow
+
+    missing = store.stage({
+        "name": "No graph",
+        "deployment_id": "no-graph",
+        "script": "print('no graph')\n",
+    })
+    with pytest.raises(DeploymentError, match="stage it again"):
+        store.workflow(missing["id"])
+
+
+def test_ros2_diagnostics_reports_robot_endpoints_and_duplicate_nodes():
+    def runner(args: list[str], _timeout: float):
+        command = " ".join(args)
+        if command == "node list":
+            stdout = "/driver\n/driver\n/controller\n"
+        elif command == "topic list -t":
+            stdout = (
+                "/leader/joint_states [sensor_msgs/msg/JointState]\n"
+                "/follower/robot_control [std_msgs/msg/String]\n"
+            )
+        elif command == "service list":
+            stdout = "/driver/get_parameters\n"
+        else:
+            stdout = "Publisher count: 1\nSubscription count: 1\n"
+        return {
+            "command": ["ros2", *args],
+            "ok": True,
+            "exit_code": 0,
+            "stdout": stdout,
+            "stderr": "",
+            "error": "",
+        }
+
+    result = ros2_diagnostics(runner)
+
+    assert result["ok"] is True
+    assert result["available"] is True
+    assert len(result["topic_details"]) == 2
+    assert result["warnings"] == ["Duplicate ROS 2 node names: /driver"]
+
+
+def test_arm_control_rejects_topics_outside_the_deployment_namespace():
+    result = publish_ros2_armed_control(
+        "/blacknode/leader_follower/follower/control;unsafe",
+        True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "deployment arm control topic is invalid"
+
+
+def test_running_deployment_has_explicit_arm_and_disarm_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    published = []
+    monkeypatch.setattr(
+        deployment_module,
+        "publish_ros2_armed_control",
+        lambda topic, armed: (
+            published.append((topic, armed))
+            or {"ok": True, "topic": topic, "armed": armed}
+        ),
+    )
+    store = DeploymentStore(tmp_path / "deployments")
+    staged = store.stage({
+        "name": "Follower",
+        "deployment_id": "follower",
+        "script": "import time\ntime.sleep(10)\n",
+        "manifest": {
+            "schema_version": 1,
+            "motion_controls": [{
+                "kind": "ros2_leader_follower",
+                "node_id": "follow",
+                "topic": "/blacknode/leader_follower/follower/control",
+            }],
+        },
+    })
+    assert staged["motion_armed"] is False
+    store.start(staged["id"])
+    try:
+        armed = store.set_motion_armed(staged["id"], True)
+        assert armed["armed"] is True
+        assert armed["deployment"]["motion_armed"] is True
+        assert published == [
+            ("/blacknode/leader_follower/follower/control", True),
+        ]
+    finally:
+        stopped = store.stop(staged["id"])
+    assert stopped["motion_armed"] is False
 
 
 def test_start_replaces_every_running_deployment_for_same_target(tmp_path: Path):
@@ -586,7 +707,17 @@ def test_http_service_requires_auth_and_serves_manifest_and_deployments(tmp_path
         status, staged = _request(
             f"{base}/deployments",
             token=token,
-            payload={"name": "HTTP", "script": "print('http deployment')\n"},
+            payload={
+                "name": "HTTP",
+                "script": "print('http deployment')\n",
+                "workflow": {
+                    "kind": "blacknode.workflow",
+                    "schema_version": 1,
+                    "name": "HTTP",
+                    "node_meta": {},
+                    "edges": [],
+                },
+            },
         )
         assert status == 201
         _, deployments = _request(f"{base}/deployments", token=token)
@@ -597,6 +728,12 @@ def test_http_service_requires_auth_and_serves_manifest_and_deployments(tmp_path
         )
         assert telemetry["available"] is False
         assert telemetry["stream"] == "robot-state"
+        _, captured = _request(
+            f"{base}/deployments/{staged['id']}/workflow",
+            token=token,
+        )
+        assert captured["source"] == "snapshot"
+        assert captured["workflow"]["name"] == "HTTP"
     finally:
         server.shutdown()
         server.server_close()
