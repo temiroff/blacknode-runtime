@@ -100,6 +100,11 @@ BLACKNODE_RUNTIME_PORT=8767 \
 Pass the same `BLACKNODE_RUNTIME_INSTANCE` and `BLACKNODE_RUNTIME_PORT` values
 to `service.sh` when managing that instance. The Blacknode editor’s automatic
 SSH setup allocates these values and checks occupied ports for you.
+Choose **Install a complete isolated robot stack** in the editor when the
+instance also needs its own `blacknode-hardware` checkout, environment,
+configuration, calibration state, tokens, service namespace, and ports. The
+new Hardware environment starts empty; connect a new robot and explicitly add
+its stable serial path from the isolated device card.
 
 ## Check and manage the service
 

@@ -36,7 +36,7 @@ def render_unit(*, repo: Path, user: str, host: str, port: int, config: Path, st
         "[Unit]",
         "Description=Blacknode Runtime Service",
         "Wants=network-online.target",
-        "After=network-online.target blacknode-hardware.service",
+        "After=network-online.target",
         "StartLimitIntervalSec=60",
         "StartLimitBurst=5",
         "",
