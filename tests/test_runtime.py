@@ -522,6 +522,10 @@ def test_deployment_telemetry_bridge_reports_latest_robot_state():
         assert publisher.publish_robot_state(
             {"shoulder": 12.5, "elbow": -4.0},
             torque_enabled=True,
+            joint_limits={
+                "shoulder": (-90.0, 90.0),
+                "elbow": (-45.0, 45.0),
+            },
         )
         for _ in range(20):
             sample = receiver.latest()
@@ -532,8 +536,20 @@ def test_deployment_telemetry_bridge_reports_latest_robot_state():
         assert sample["stale"] is False
         assert sample["payload"]["torque_enabled"] is True
         assert sample["payload"]["joints"] == [
-            {"name": "shoulder", "position": 12.5, "velocity": 0.0},
-            {"name": "elbow", "position": -4.0, "velocity": 0.0},
+            {
+                "name": "shoulder",
+                "position": 12.5,
+                "velocity": 0.0,
+                "lower_limit": -90.0,
+                "upper_limit": 90.0,
+            },
+            {
+                "name": "elbow",
+                "position": -4.0,
+                "velocity": 0.0,
+                "lower_limit": -45.0,
+                "upper_limit": 45.0,
+            },
         ]
     finally:
         publisher.close()

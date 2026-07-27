@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import secrets
 import socket
@@ -201,6 +202,7 @@ class DeploymentTelemetryPublisher:
         connected: bool = True,
         position_unit: str = "degree",
         error: str = "",
+        joint_limits: Mapping[str, tuple[float, float]] | None = None,
     ) -> bool:
         now = time.monotonic()
         clean_positions = {
@@ -220,6 +222,16 @@ class DeploymentTelemetryPublisher:
             )
             for name, position in clean_positions.items()
         }
+        clean_limits: dict[str, tuple[float, float]] = {}
+        for name, raw_limits in (joint_limits or {}).items():
+            if name not in clean_positions:
+                continue
+            try:
+                lower, upper = (float(raw_limits[0]), float(raw_limits[1]))
+            except (IndexError, TypeError, ValueError):
+                continue
+            if math.isfinite(lower) and math.isfinite(upper) and lower < upper:
+                clean_limits[str(name)] = (lower, upper)
         self._last_positions = clean_positions
         self._last_position_time = now
         velocity_unit = f"{position_unit}/s" if position_unit else "unit/s"
@@ -233,6 +245,14 @@ class DeploymentTelemetryPublisher:
                     "name": name,
                     "position": position,
                     "velocity": velocities[name],
+                    **(
+                        {
+                            "lower_limit": clean_limits[name][0],
+                            "upper_limit": clean_limits[name][1],
+                        }
+                        if name in clean_limits
+                        else {}
+                    ),
                 }
                 for name, position in clean_positions.items()
             ],
