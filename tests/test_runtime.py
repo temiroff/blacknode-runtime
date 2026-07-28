@@ -18,6 +18,7 @@ from blacknode_runtime.auth import load_auth_token, token_fingerprint
 from blacknode_runtime.config import RuntimeConfig
 from blacknode_runtime.deployments import DeploymentError, DeploymentStore
 from blacknode_runtime.diagnostics import publish_ros2_armed_control, ros2_diagnostics
+from blacknode_runtime import environment as environment_module
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
 from blacknode_runtime.managed_services import ManagedServiceError, ManagedServiceStore
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
@@ -48,6 +49,46 @@ def _request(url: str, *, token: str | None = None, payload: dict | None = None)
     request = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(request, timeout=3) as response:
         return response.status, json.loads(response.read())
+
+
+def test_runtime_environment_loads_new_package_ros_workspaces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    setup = (
+        tmp_path
+        / "blacknode-perception"
+        / "components"
+        / "camera"
+        / "adapters"
+        / "ros2"
+        / "ros2_ws"
+        / "install"
+        / "setup.bash"
+    )
+    setup.parent.mkdir(parents=True)
+    setup.write_text("# test workspace\n", encoding="utf-8")
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["environment"] = kwargs["env"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=b"AMENT_PREFIX_PATH=/camera/install\0BASE=value\0",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(environment_module.subprocess, "run", fake_run)
+    result = environment_module.runtime_environment({
+        "BLACKNODE_PACKAGE_PATH": str(tmp_path),
+        "BASE": "original",
+    })
+
+    assert str(setup.resolve()) in seen["command"]
+    assert seen["environment"]["BASE"] == "original"
+    assert result["AMENT_PREFIX_PATH"] == "/camera/install"
+    assert result["BASE"] == "value"
 
 
 def test_config_round_trip_contains_token_path_not_secret(tmp_path: Path):
@@ -927,13 +968,19 @@ def test_managed_ros2_service_is_scoped_and_reports_interfaces(
 
     processes = []
 
-    def fake_popen(command, **_kwargs):
+    def fake_popen(command, **kwargs):
         process = FakeProcess()
         process.command = command
+        process.environment = kwargs["env"]
         processes.append(process)
         return process
 
     monkeypatch.setattr(service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        service_module,
+        "runtime_environment",
+        lambda: {"BLACKNODE_PACKAGE_ROS": "ready"},
+    )
     monkeypatch.setattr(
         service_module,
         "inspect_ros2_interfaces",
@@ -972,6 +1019,7 @@ def test_managed_ros2_service_is_scoped_and_reports_interfaces(
     ]
     assert started["diagnostics"]["ok"] is True
     assert len(processes) == 1
+    assert processes[0].environment["BLACKNODE_PACKAGE_ROS"] == "ready"
 
     # Repeating the same request is idempotent and does not duplicate a camera.
     assert store.start("front-camera", payload)["pid"] == 4321

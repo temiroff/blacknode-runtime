@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .diagnostics import is_ros2_armed_control_topic, publish_ros2_armed_control
+from .environment import runtime_environment
 from .telemetry import DeploymentTelemetryReceiver
 
 
@@ -320,7 +321,7 @@ class DeploymentStore:
             log_path = self.root / deployment_id / "deployment.log"
             log = open(log_path, "ab", buffering=0)
             log.write(f"\n=== {_now()} starting {deployment_id}@{revision} ===\n".encode())
-            env = os.environ.copy()
+            env = runtime_environment()
             env["PYTHONUNBUFFERED"] = "1"
             env["BLACKNODE_DEPLOYMENT_ID"] = deployment_id
             env["BLACKNODE_DEPLOYMENT_REVISION"] = revision

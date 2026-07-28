@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .diagnostics import inspect_ros2_interfaces
+from .environment import RuntimeEnvironmentError, runtime_environment
 
 
 _ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -98,7 +99,7 @@ class ManagedServiceStore:
                     command,
                     stdout=log,
                     stderr=subprocess.STDOUT,
-                    env=os.environ.copy(),
+                    env=runtime_environment(),
                     start_new_session=os.name != "nt",
                     creationflags=(
                         getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -106,7 +107,7 @@ class ManagedServiceStore:
                         else 0
                     ),
                 )
-            except OSError as exc:
+            except (OSError, RuntimeEnvironmentError) as exc:
                 log.close()
                 raise ManagedServiceError(
                     f"could not start managed ROS 2 service: {exc}"
