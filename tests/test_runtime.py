@@ -951,12 +951,12 @@ def test_managed_ros2_service_is_scoped_and_reports_interfaces(
         "name": "Front RGB-D camera",
         "command": {
             "verb": "launch",
-            "package": "peripherals",
-            "target": "depth_camera.launch.py",
+            "package": "perception_camera",
+            "target": "rgbd_camera.launch.py",
             "arguments": [],
         },
         "interfaces": [{
-            "topic": "/depth_cam/rgb0/image_raw",
+            "topic": "/camera/rgb/image_raw",
             "type": "sensor_msgs/msg/Image",
             "direction": "publisher",
         }],
@@ -967,8 +967,8 @@ def test_managed_ros2_service_is_scoped_and_reports_interfaces(
     assert started["command"] == [
         "ros2",
         "launch",
-        "peripherals",
-        "depth_camera.launch.py",
+        "perception_camera",
+        "rgbd_camera.launch.py",
     ]
     assert started["diagnostics"]["ok"] is True
     assert len(processes) == 1

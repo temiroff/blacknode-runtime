@@ -8,6 +8,7 @@ import re
 import signal
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,15 @@ class ManagedServiceStore:
         self._validate_id(service_id)
         command = self._validate_command(payload.get("command"))
         interfaces = self._validate_interfaces(payload.get("interfaces"))
+        try:
+            wait_seconds = max(
+                0.0,
+                min(float(payload.get("wait_seconds") or 0.0), 30.0),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ManagedServiceError(
+                "wait_seconds must be a number from 0 to 30"
+            ) from exc
         display_name = str(payload.get("name") or service_id).strip()[:120]
         with self._lock:
             existing = self._read(service_id)
@@ -74,7 +84,7 @@ class ManagedServiceStore:
                     and existing.get("command") == command
                     and existing.get("interfaces") == interfaces
                 ):
-                    return self.get(service_id)
+                    return self._wait_for_ready(service_id, wait_seconds)
                 if existing.get("state") == "running":
                     self._stop_locked(service_id, existing)
 
@@ -121,7 +131,30 @@ class ManagedServiceStore:
                 "updated_at": _now(),
             }
             self._write(record)
-        return self.get(service_id)
+        return self._wait_for_ready(service_id, wait_seconds)
+
+    def _wait_for_ready(
+        self,
+        service_id: str,
+        wait_seconds: float,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            record = self.get(service_id)
+            if record is None:
+                raise ManagedServiceError("managed service disappeared")
+            diagnostics = (
+                record.get("diagnostics")
+                if isinstance(record.get("diagnostics"), dict)
+                else {}
+            )
+            if (
+                record.get("state") != "running"
+                or diagnostics.get("ok")
+                or time.monotonic() >= deadline
+            ):
+                return record
+            time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
 
     def stop(self, service_id: str) -> dict[str, Any]:
         self._validate_id(service_id)
