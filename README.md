@@ -179,8 +179,13 @@ Package synchronization:
   index;
 - installs the package's declared prerequisites into the runtime environment;
 - activates the exact components and adapters declared by workflow metadata;
+- repairs missing colcon overlays declared by enabled `ros2-workspaces`;
+- sources built, manifest-declared ROS 2 workspaces for managed services and
+  deployments;
 - loads its registered nodes;
 - behaves idempotently when the requested version is already present;
+- preserves tracked and untracked device-local package edits in a recoverable
+  Git stash before an automatic update;
 - fast-forwards a clean package checkout when the editor requests a newer
   published version; and
 - verifies package and node availability before the workflow is staged.
@@ -197,13 +202,33 @@ contracts. Package releases must bump `version` in `blacknode-package.toml`;
 the editor sends that version and source to the runtime, so new package
 releases do not require a runtime update.
 
+Runtime-managed package updates preserve a modified checkout before pulling.
+The synchronization messages report the stash reference and a recovery command.
+Blacknode leaves the stash unapplied so the updated package stays reproducible
+and deployment preflight can continue. Operators can inspect or restore those
+edits later with `git -C packages/<name> stash list` and `stash pop`.
+
+ROS 2 package adapters declare their workspace roots in the owning component or
+adapter:
+
+```toml
+[components.camera.adapters.ros2]
+ros2-workspaces = ["components/camera/adapters/ros2/ros2_ws"]
+```
+
+Each path is relative to the extension-package root. Synchronization verifies
+`<workspace>/install/setup.bash`; when it is missing, the Runtime reruns the
+package prerequisites and setup hooks. Synchronization stops with the missing
+overlay paths when package setup cannot build them. This contract applies to
+every extension package and keeps optional, disabled adapters isolated.
+
 ## Runtime API
 
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/health` | Public service identity |
 | `GET` | `/manifest` | Python, platform, Blacknode, package, and feature inventory |
-| `POST` | `/packages/sync` | Idempotently install packages and activate declared components and adapters |
+| `POST` | `/packages/sync` | Install packages, activate components/adapters, and prepare declared ROS 2 workspaces |
 | `GET` | `/deployments` | List staged and running deployments |
 | `POST` | `/deployments` | Stage a Python deployment revision |
 | `GET` | `/deployments/{id}` | Inspect one deployment |

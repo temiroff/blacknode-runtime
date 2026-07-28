@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -55,19 +56,25 @@ def test_runtime_environment_loads_new_package_ros_workspaces(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    package_dir = tmp_path / "blacknode-perception"
     setup = (
-        tmp_path
-        / "blacknode-perception"
-        / "components"
-        / "camera"
-        / "adapters"
-        / "ros2"
-        / "ros2_ws"
+        package_dir
+        / "providers"
+        / "camera_ws"
         / "install"
         / "setup.bash"
     )
     setup.parent.mkdir(parents=True)
     setup.write_text("# test workspace\n", encoding="utf-8")
+    (package_dir / "blacknode-package.toml").write_text(
+        "[package]\n"
+        'name = "blacknode-perception"\n'
+        'version = "0.3.3"\n'
+        "\n"
+        "[components.camera.adapters.ros2]\n"
+        'ros2-workspaces = ["providers/camera_ws"]\n',
+        encoding="utf-8",
+    )
     seen = {}
 
     def fake_run(command, **kwargs):
@@ -89,6 +96,139 @@ def test_runtime_environment_loads_new_package_ros_workspaces(
     assert seen["environment"]["BASE"] == "original"
     assert result["AMENT_PREFIX_PATH"] == "/camera/install"
     assert result["BASE"] == "value"
+
+
+def test_package_sync_repairs_missing_declared_ros2_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import blacknode.packages as packages
+
+    manager = PackageManager(tmp_path / "packages")
+    package_dir = manager.root / "blacknode-perception"
+    package_dir.mkdir()
+    (package_dir / "blacknode-package.toml").write_text(
+        "[package]\n"
+        'name = "blacknode-perception"\n'
+        'version = "0.3.3"\n'
+        'description = "Perception"\n'
+        'requires-blacknode = ">=0.3.0"\n'
+        "\n"
+        "[components.camera]\n"
+        "default = true\n"
+        "\n"
+        "[components.camera.adapters.ros2]\n"
+        "default = true\n"
+        'ros2-workspaces = ["providers/camera_ws"]\n',
+        encoding="utf-8",
+    )
+    info = SimpleNamespace(
+        name="blacknode-perception",
+        version="0.3.3",
+        node_types=["CameraROS2Provider"],
+        ok=True,
+        error="",
+        enabled_components=["camera"],
+        enabled_adapters=["camera/ros2"],
+    )
+    monkeypatch.setattr(packages, "load_package", lambda _path: info)
+    monkeypatch.setattr(
+        packages,
+        "ensure_component_enabled",
+        lambda *_args, **_kwargs: info,
+    )
+    monkeypatch.setattr(
+        packages,
+        "ensure_adapter_enabled",
+        lambda *_args, **_kwargs: info,
+    )
+    setup_calls = []
+
+    def repair(package_path, *, progress):
+        setup_calls.append(Path(package_path))
+        setup = package_dir / "providers/camera_ws/install/setup.bash"
+        setup.parent.mkdir(parents=True)
+        setup.write_text("# built\n", encoding="utf-8")
+        progress("Built declared ROS 2 workspace")
+        return []
+
+    monkeypatch.setattr(packages, "install_prerequisites", repair)
+
+    result = manager.sync({
+        "packages": [{
+            "name": "blacknode-perception",
+            "git_url": "https://github.com/temiroff/blacknode-perception.git",
+            "version": "0.3.3",
+        }],
+    })
+
+    assert result["ok"] is True
+    assert setup_calls == [package_dir]
+    assert any(
+        "Repairing blacknode-perception ROS 2 workspace setup" in message
+        for message in result["messages"]
+    )
+
+
+def test_package_sync_rejects_unbuilt_declared_ros2_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import blacknode.packages as packages
+
+    manager = PackageManager(tmp_path / "packages")
+    package_dir = manager.root / "blacknode-example"
+    package_dir.mkdir()
+    (package_dir / "blacknode-package.toml").write_text(
+        "[package]\n"
+        'name = "blacknode-example"\n'
+        'version = "1.0.0"\n'
+        "\n"
+        "[components.sensor.adapters.ros2]\n"
+        'ros2-workspaces = ["robot_ws"]\n',
+        encoding="utf-8",
+    )
+    info = SimpleNamespace(
+        name="blacknode-example",
+        version="1.0.0",
+        node_types=[],
+        ok=True,
+        error="",
+    )
+    monkeypatch.setattr(packages, "load_package", lambda _path: info)
+    monkeypatch.setattr(
+        packages,
+        "ensure_component_enabled",
+        lambda *_args, **_kwargs: info,
+    )
+    monkeypatch.setattr(
+        packages,
+        "ensure_adapter_enabled",
+        lambda *_args, **_kwargs: info,
+    )
+    monkeypatch.setattr(
+        packages,
+        "install_prerequisites",
+        lambda *_args, **_kwargs: [
+            "package setup script failed"
+        ],
+    )
+
+    with pytest.raises(
+        PackageSyncError,
+        match="did not build its declared ROS 2 workspace overlays",
+    ):
+        manager.sync({
+            "packages": [{
+                "name": "blacknode-example",
+                "git_url": "https://example.com/blacknode-example.git",
+                "components": ["sensor"],
+                "adapters": [{
+                    "component": "sensor",
+                    "adapter": "ros2",
+                }],
+            }],
+        })
 
 
 def test_config_round_trip_contains_token_path_not_secret(tmp_path: Path):
@@ -216,6 +356,12 @@ def test_package_sync_activates_declared_components_and_adapters(
     manager = PackageManager(tmp_path / "packages")
     package_dir = manager.root / "blacknode-skills"
     package_dir.mkdir()
+    (package_dir / "blacknode-package.toml").write_text(
+        "[package]\n"
+        'name = "blacknode-skills"\n'
+        'version = "0.1.0"\n',
+        encoding="utf-8",
+    )
     info = SimpleNamespace(
         name="blacknode-skills",
         version="0.1.0",
@@ -324,6 +470,68 @@ def test_package_sync_update_refreshes_existing_package_at_same_version(
         ("blacknode-skills", package_dir, "latest revision"),
     ]
     assert result["already_present"][0]["version"] == "0.2.3"
+
+
+def test_package_update_preserves_local_changes_in_git_stash(tmp_path: Path):
+    origin = tmp_path / "origin.git"
+    package_dir = tmp_path / "blacknode-perception"
+    subprocess.run(
+        ["git", "init", "--bare", str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "clone", str(origin), str(package_dir)],
+        check=True,
+        capture_output=True,
+    )
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(package_dir), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("config", "user.email", "runtime-test@example.com")
+    git("config", "user.name", "Runtime Test")
+    git("config", "core.autocrlf", "false")
+    tracked = package_dir / "provider.txt"
+    tracked.write_text("published provider\n", encoding="utf-8")
+    git("add", "provider.txt")
+    git("commit", "-m", "Initial provider")
+    git("push", "--set-upstream", "origin", "HEAD")
+
+    tracked.write_text("device-local provider edit\n", encoding="utf-8")
+    untracked = package_dir / "device-notes.txt"
+    untracked.write_text("local calibration notes\n", encoding="utf-8")
+    messages: list[str] = []
+
+    PackageManager._update_existing(
+        "blacknode-perception",
+        package_dir,
+        "0.3.3",
+        messages,
+    )
+
+    assert git("status", "--porcelain").stdout == ""
+    assert tracked.read_text(encoding="utf-8") == "published provider\n"
+    stash_list = git("stash", "list").stdout
+    assert "blacknode-runtime package sync before 0.3.3" in stash_list
+    stash_files = git(
+        "stash",
+        "show",
+        "--include-untracked",
+        "--name-only",
+        "stash@{0}",
+    ).stdout
+    assert "provider.txt" in stash_files
+    assert "device-notes.txt" in stash_files
+    assert any(
+        "recover them with git -C" in message
+        for message in messages
+    )
 
 
 def test_stage_start_logs_and_revision_rollback(tmp_path: Path):
