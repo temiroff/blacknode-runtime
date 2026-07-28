@@ -7,6 +7,12 @@ import subprocess
 from pathlib import Path
 from typing import Mapping
 
+from .package_workspaces import (
+    PackageWorkspaceError,
+    declared_ros2_workspaces,
+    workspace_setup_path,
+)
+
 
 class RuntimeEnvironmentError(RuntimeError):
     pass
@@ -24,6 +30,19 @@ def package_workspace_setups(
         root = Path(root_value).expanduser().resolve()
         if not root.is_dir():
             continue
+        for manifest in root.glob("*/blacknode-package.toml"):
+            try:
+                workspaces = declared_ros2_workspaces(manifest.parent)
+            except PackageWorkspaceError:
+                # A malformed optional package must not prevent unrelated
+                # deployments or managed services from starting.
+                continue
+            for workspace in workspaces:
+                candidate = workspace_setup_path(workspace)
+                if candidate.is_file():
+                    setups.add(candidate.resolve())
+        # Preserve discovery for packages released before ros2-workspaces was
+        # part of the manifest contract.
         for candidate in root.glob(
             "*/components/*/adapters/*/ros2_ws/install/setup.bash"
         ):

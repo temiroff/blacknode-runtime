@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .package_workspaces import (
+    PackageWorkspaceError,
+    declared_ros2_workspaces,
+    workspace_setup_path,
+)
+
 
 _PACKAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _COMPONENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -70,6 +76,16 @@ class PackageManager:
                         f"{spec['name']} component activation failed: "
                         f"{type(exc).__name__}: {exc}"
                     ) from exc
+            for spec in specs:
+                try:
+                    self._ensure_ros2_workspaces(spec, messages)
+                except PackageSyncError:
+                    raise
+                except Exception as exc:
+                    raise PackageSyncError(
+                        f"{spec['name']} ROS 2 workspace setup failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
 
         return {
             "ok": True,
@@ -78,6 +94,67 @@ class PackageManager:
             "activated": activated,
             "messages": messages[-100:],
         }
+
+    def _ensure_ros2_workspaces(
+        self,
+        spec: dict[str, Any],
+        messages: list[str],
+    ) -> None:
+        from blacknode.packages import install_prerequisites, load_package
+
+        package_dir = self.root / spec["name"]
+        info = load_package(package_dir)
+        components = {
+            str(value)
+            for value in spec.get("components", [])
+        }
+        components.update(
+            str(value)
+            for value in getattr(info, "enabled_components", [])
+        )
+        adapters = {
+            (item["component"], item["adapter"])
+            for item in spec.get("adapters", [])
+        }
+        for value in getattr(info, "enabled_adapters", []):
+            component, separator, adapter = str(value).partition("/")
+            if separator and component and adapter:
+                adapters.add((component, adapter))
+        try:
+            workspaces = declared_ros2_workspaces(
+                package_dir,
+                components=sorted(components),
+                adapters=sorted(adapters),
+            )
+        except PackageWorkspaceError as exc:
+            raise PackageSyncError(f"{spec['name']} has invalid {exc}") from exc
+        missing = [
+            workspace_setup_path(workspace)
+            for workspace in workspaces
+            if not workspace_setup_path(workspace).is_file()
+        ]
+        if not missing:
+            return
+
+        relative = [
+            str(path.relative_to(package_dir))
+            for path in missing
+        ]
+        messages.append(
+            f"Repairing {spec['name']} ROS 2 workspace setup: "
+            + ", ".join(relative)
+        )
+        install_prerequisites(package_dir, progress=messages.append)
+        remaining = [path for path in missing if not path.is_file()]
+        if remaining:
+            detail = ", ".join(
+                str(path.relative_to(package_dir))
+                for path in remaining
+            )
+            raise PackageSyncError(
+                f"{spec['name']} setup did not build its declared ROS 2 "
+                f"workspace overlays: {detail}"
+            )
 
     @staticmethod
     def _activate_requirements(
@@ -183,8 +260,67 @@ class PackageManager:
                 f"could not inspect {name}: {status.stderr.strip() or status.stdout.strip()}"
             )
         if status.stdout.strip():
-            raise PackageSyncError(
-                f"{name} has local changes; automatic package update was refused"
+            messages.append(
+                f"Preserving local changes before updating {name}"
+            )
+            preserved = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(package_dir),
+                    "stash",
+                    "push",
+                    "--include-untracked",
+                    "--message",
+                    f"blacknode-runtime package sync before {requested_version}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if preserved.returncode != 0:
+                raise PackageSyncError(
+                    f"{name} has local changes and they could not be preserved: "
+                    f"{preserved.stderr.strip() or preserved.stdout.strip()}"
+                )
+            clean = subprocess.run(
+                ["git", "-C", str(package_dir), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if clean.returncode != 0 or clean.stdout.strip():
+                detail = (
+                    clean.stderr.strip()
+                    or clean.stdout.strip()
+                    or "checkout is still modified after git stash"
+                )
+                raise PackageSyncError(
+                    f"{name} local changes were preserved, but its checkout "
+                    f"could not be cleaned: {detail}"
+                )
+            stash = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(package_dir),
+                    "stash",
+                    "list",
+                    "-1",
+                    "--format=%gd",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            stash_ref = (
+                stash.stdout.strip()
+                if stash.returncode == 0 and stash.stdout.strip()
+                else "the package Git stash"
+            )
+            messages.append(
+                f"Preserved {name} local changes in {stash_ref}; "
+                f"recover them with git -C {package_dir} stash pop"
             )
         messages.append(f"Updating {name} to version {requested_version}")
         update = subprocess.run(
