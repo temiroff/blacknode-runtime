@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -12,6 +13,7 @@ from .auth import authorization_matches
 from .config import RuntimeConfig
 from .deployments import DeploymentError, DeploymentStore
 from .diagnostics import ros2_diagnostics
+from .managed_services import ManagedServiceError, ManagedServiceStore
 from .manifest import runtime_manifest
 from .package_manager import PackageManager, PackageSyncError
 
@@ -20,6 +22,9 @@ MAX_REQUEST_BYTES = 5 * 1024 * 1024
 _DEPLOYMENT_PATH = re.compile(
     r"^/deployments/([a-z0-9-]+)(?:/(start|stop|logs|rollback|telemetry|workflow|control))?$"
 )
+_SERVICE_PATH = re.compile(
+    r"^/services/([a-z0-9-]+)(?:/(start|stop|logs))?$"
+)
 
 
 class RuntimeRequestHandler(BaseHTTPRequestHandler):
@@ -27,6 +32,7 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
     store: DeploymentStore
     auth_token: str
     package_manager: PackageManager | None
+    service_store: ManagedServiceStore
 
     def log_message(self, _format: str, *_args: Any) -> None:
         return
@@ -82,8 +88,33 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
         if path == "/deployments":
             self._send(200, {"deployments": self.store.list()})
             return
+        if path == "/services":
+            self._send(200, {"services": self.service_store.list()})
+            return
         if path == "/diagnostics/ros2":
             self._send(200, ros2_diagnostics())
+            return
+        service_match = _SERVICE_PATH.fullmatch(path)
+        if service_match:
+            service_id, action = service_match.groups()
+            try:
+                if action == "logs":
+                    query = parse_qs(urlsplit(self.path).query)
+                    limit = int((query.get("limit") or ["20000"])[0])
+                    self._send(200, {
+                        "id": service_id,
+                        "logs": self.service_store.logs(service_id, limit),
+                    })
+                elif action is None:
+                    record = self.service_store.get(service_id)
+                    if record is None:
+                        self._send(404, {"ok": False, "error": "service not found"})
+                    else:
+                        self._send(200, record)
+                else:
+                    self._send(405, {"ok": False, "error": "method not allowed"})
+            except (ManagedServiceError, ValueError) as exc:
+                self._send(400, {"ok": False, "error": str(exc)})
             return
         match = _DEPLOYMENT_PATH.fullmatch(path)
         if not match:
@@ -131,6 +162,18 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
             if path == "/deployments":
                 self._send(201, self.store.stage(payload))
                 return
+            service_match = _SERVICE_PATH.fullmatch(path)
+            if service_match:
+                service_id, action = service_match.groups()
+                if action == "start":
+                    result = self.service_store.start(service_id, payload)
+                elif action == "stop":
+                    result = self.service_store.stop(service_id)
+                else:
+                    self._send(405, {"ok": False, "error": "method not allowed"})
+                    return
+                self._send(200, result)
+                return
             match = _DEPLOYMENT_PATH.fullmatch(path)
             if not match:
                 self._send(404, {"ok": False, "error": "not found"})
@@ -160,6 +203,8 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "error": "deployment not found"})
         except DeploymentError as exc:
             self._send(409, {"ok": False, "error": str(exc)})
+        except ManagedServiceError as exc:
+            self._send(409, {"ok": False, "error": str(exc)})
         except PackageSyncError as exc:
             self._send(409, {"ok": False, "error": str(exc)})
 
@@ -185,11 +230,15 @@ def create_server(
     auth_token: str,
     *,
     package_manager: PackageManager | None = None,
+    service_store: ManagedServiceStore | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
 ) -> ThreadingHTTPServer:
     if not auth_token:
         raise RuntimeError("runtime service authentication is required")
+    bound_service_store = service_store or ManagedServiceStore(
+        Path(config.state_dir) / "services"
+    )
     handler = type(
         "BoundRuntimeRequestHandler",
         (RuntimeRequestHandler,),
@@ -198,6 +247,7 @@ def create_server(
             "store": store,
             "auth_token": auth_token,
             "package_manager": package_manager,
+            "service_store": bound_service_store,
         },
     )
     return ThreadingHTTPServer((host, port), handler)
@@ -209,6 +259,7 @@ def serve(
     auth_token: str,
     *,
     package_manager: PackageManager | None = None,
+    service_store: ManagedServiceStore | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
 ) -> None:
@@ -217,6 +268,7 @@ def serve(
         store,
         auth_token,
         package_manager=package_manager,
+        service_store=service_store,
         host=host,
         port=port,
     )
@@ -225,4 +277,5 @@ def serve(
         server.serve_forever()
     finally:
         server.server_close()
+        server.RequestHandlerClass.service_store.stop_all()
         store.stop_all()

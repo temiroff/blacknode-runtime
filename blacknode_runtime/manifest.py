@@ -30,6 +30,7 @@ FEATURES = [
     "deployment_workflow_v1",
     "deployment_motion_control_v1",
     "ros2_diagnostics_v1",
+    "managed_ros2_services_v1",
 ]
 
 

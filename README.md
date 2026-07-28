@@ -216,6 +216,11 @@ releases do not require a runtime update.
 | `POST` | `/deployments/{id}/rollback` | Select the previous revision, optionally start it |
 | `DELETE` | `/deployments/{id}` | Delete a stopped deployment |
 | `GET` | `/diagnostics/ros2` | Read ROS 2 nodes, topics, services, and robot-topic endpoint details |
+| `GET` | `/services` | List managed attachment/provider services independently from deployments |
+| `GET` | `/services/{id}` | Inspect one service and its declared ROS 2 interface readiness |
+| `POST` | `/services/{id}/start` | Idempotently start a vetted `ros2 run` or `ros2 launch` provider |
+| `POST` | `/services/{id}/stop` | Stop only that provider process group |
+| `GET` | `/services/{id}/logs` | Read provider output |
 
 Staging and starting are separate operations. A staged workflow cannot move
 hardware until it is explicitly started and then passes the hardware service's
