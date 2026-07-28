@@ -19,6 +19,7 @@ from blacknode_runtime.config import RuntimeConfig
 from blacknode_runtime.deployments import DeploymentError, DeploymentStore
 from blacknode_runtime.diagnostics import publish_ros2_armed_control, ros2_diagnostics
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
+from blacknode_runtime.managed_services import ManagedServiceError, ManagedServiceStore
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
 from blacknode_runtime.server import create_server
 from blacknode_runtime.telemetry import DeploymentTelemetryPublisher, DeploymentTelemetryReceiver
@@ -892,6 +893,168 @@ def test_http_package_sync_is_authenticated_and_delegated(tmp_path: Path):
         assert status == 200
         assert result["installed"][0]["name"] == "blacknode-perception"
         assert package_manager.payloads == [payload]
+    finally:
+        server.shutdown()
+        server.server_close()
+        store.stop_all()
+
+
+def test_managed_ros2_service_is_scoped_and_reports_interfaces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from blacknode_runtime import managed_services as service_module
+
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self):
+            self.exit_code = None
+            self.terminated = False
+
+        def poll(self):
+            return self.exit_code
+
+        def terminate(self):
+            self.terminated = True
+            self.exit_code = 0
+
+        def wait(self, timeout=None):
+            return self.exit_code
+
+        def kill(self):
+            self.exit_code = -9
+
+    processes = []
+
+    def fake_popen(command, **_kwargs):
+        process = FakeProcess()
+        process.command = command
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        service_module,
+        "inspect_ros2_interfaces",
+        lambda interfaces: {
+            "ok": True,
+            "interfaces": [
+                {**item, "ready": True, "publishers": 1}
+                for item in interfaces
+            ],
+            "missing": [],
+        },
+    )
+    store = ManagedServiceStore(tmp_path / "services")
+    payload = {
+        "name": "Front RGB-D camera",
+        "command": {
+            "verb": "launch",
+            "package": "peripherals",
+            "target": "depth_camera.launch.py",
+            "arguments": [],
+        },
+        "interfaces": [{
+            "topic": "/depth_cam/rgb0/image_raw",
+            "type": "sensor_msgs/msg/Image",
+            "direction": "publisher",
+        }],
+    }
+
+    started = store.start("front-camera", payload)
+    assert started["state"] == "running"
+    assert started["command"] == [
+        "ros2",
+        "launch",
+        "peripherals",
+        "depth_camera.launch.py",
+    ]
+    assert started["diagnostics"]["ok"] is True
+    assert len(processes) == 1
+
+    # Repeating the same request is idempotent and does not duplicate a camera.
+    assert store.start("front-camera", payload)["pid"] == 4321
+    assert len(processes) == 1
+
+    stopped = store.stop("front-camera")
+    assert stopped["state"] == "stopped"
+    assert processes[0].terminated is True
+
+
+def test_managed_ros2_service_rejects_shell_commands(tmp_path: Path):
+    store = ManagedServiceStore(tmp_path / "services")
+    with pytest.raises(ManagedServiceError, match="verb must be"):
+        store.start("front-camera", {
+            "command": {
+                "verb": "exec",
+                "package": "sh",
+                "target": "-c",
+                "arguments": ["rm -rf /"],
+            },
+        })
+
+
+def test_http_managed_service_lifecycle_is_authenticated(tmp_path: Path):
+    class FakeServiceStore:
+        def __init__(self):
+            self.started = []
+            self.stopped = []
+
+        def list(self):
+            return []
+
+        def get(self, service_id):
+            return {"id": service_id, "state": "running"}
+
+        def start(self, service_id, payload):
+            self.started.append((service_id, payload))
+            return {"id": service_id, "state": "running"}
+
+        def stop(self, service_id):
+            self.stopped.append(service_id)
+            return {"id": service_id, "state": "stopped"}
+
+        def logs(self, service_id, limit):
+            return f"{service_id}:{limit}"
+
+        def stop_all(self):
+            return None
+
+    token = "runtime-pairing-token-" + "x" * 32
+    config, _ = _config(tmp_path, token)
+    store = DeploymentStore(tmp_path / "deployments")
+    service_store = FakeServiceStore()
+    server = create_server(
+        config,
+        store,
+        token,
+        service_store=service_store,
+        port=0,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with pytest.raises(urllib.error.HTTPError) as unauthorized:
+            _request(f"{base}/services")
+        assert unauthorized.value.code == 401
+        _, services = _request(f"{base}/services", token=token)
+        assert services == {"services": []}
+        _, started = _request(
+            f"{base}/services/front-camera/start",
+            token=token,
+            payload={"command": {"verb": "run"}},
+        )
+        assert started["state"] == "running"
+        _, stopped = _request(
+            f"{base}/services/front-camera/stop",
+            token=token,
+            payload={},
+        )
+        assert stopped["state"] == "stopped"
+        assert service_store.started[0][0] == "front-camera"
+        assert service_store.stopped == ["front-camera"]
     finally:
         server.shutdown()
         server.server_close()
