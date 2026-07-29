@@ -2,12 +2,30 @@
 
 Authenticated remote deployment and process supervision for Blacknode devices.
 
-The runtime is separate from robot hardware and AI planning:
+The runtime owns:
+
+- process lifecycle and supervision;
+- extension-component loading and dependency resolution;
+- workflow staging and execution;
+- authenticated configuration;
+- logging;
+- infrastructure deployment lifecycle: staging, start, stop, revision history,
+  and rollback.
+
+Deployment and rollback operate on runtime artifacts and supervised processes.
+Robot behavior, motion planning, and hardware logic stay in their owning
+packages.
+
+Domain behavior remains with the package that owns it:
 
 - `blacknode-runtime` stages versioned workflow scripts, starts and stops them,
   captures logs, reports the target environment, and rolls back revisions.
-- `blacknode-hardware` owns physical device state and safe hardware commands.
-- `blacknode-agent` owns planning, skills, confirmation, and memory.
+- `blacknode-robot` owns connected device state, lifecycle, health, telemetry,
+  and safe hardware commands through its device components.
+- `blacknode-agent` owns memory and executive mission orchestration.
+- `blacknode-skills` owns reusable robot behavior.
+- `blacknode-drivers` owns physical hardware communication.
+- `blacknode-ros2` owns ROS graph and transport integration.
 
 ## Install on Ubuntu, Raspberry Pi, or Jetson
 
@@ -19,7 +37,7 @@ cd blacknode-runtime
 ./install-device.sh
 ```
 
-The installer downloads `blacknode-hardware`, installs both Python
+The installer downloads `blacknode-robot`, installs both Python
 environments, discovers every responding serial robot, asks for friendly robot
 names, creates one hardware service per robot, installs the shared deployment
 runtime, configures active UFW rules, and prints the editor pairing checklist.
@@ -72,7 +90,7 @@ processes inherit `rclpy`, ROS topic discovery, and the configured ROS domain.
 If the repositories are not siblings, provide the token path:
 
 ```bash
-BLACKNODE_AUTH_TOKEN_FILE=/path/to/blacknode-hardware/.blacknode-hardware/auth.token \
+BLACKNODE_AUTH_TOKEN_FILE=/path/to/blacknode-robot/.blacknode-hardware/auth.token \
 ./setup_ubuntu.sh
 ```
 
@@ -101,7 +119,7 @@ Pass the same `BLACKNODE_RUNTIME_INSTANCE` and `BLACKNODE_RUNTIME_PORT` values
 to `service.sh` when managing that instance. The Blacknode editor’s automatic
 SSH setup allocates these values and checks occupied ports for you.
 Choose **Install a complete isolated robot stack** in the editor when the
-instance also needs its own `blacknode-hardware` checkout, environment,
+instance also needs its own `blacknode-robot` checkout, environment,
 configuration, calibration state, tokens, service namespace, and ports. The
 new Hardware environment starts empty; connect a new robot and explicitly add
 its stable serial path from the isolated device card.

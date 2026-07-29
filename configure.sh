@@ -12,7 +12,7 @@ fi
 
 args=(--config "$config")
 if [[ "${1:-}" != "--show" && ! -f "$config" ]]; then
-  token_file="${BLACKNODE_AUTH_TOKEN_FILE:-$repo_dir/../blacknode-hardware/.blacknode-hardware/auth.token}"
+  token_file="${BLACKNODE_AUTH_TOKEN_FILE:-$repo_dir/../blacknode-robot/.blacknode-hardware/auth.token}"
   args+=(--token-file "$token_file")
   if [[ -n "${BLACKNODE_CORE_PATH:-}" ]]; then
     args+=(--blacknode-root "$BLACKNODE_CORE_PATH")

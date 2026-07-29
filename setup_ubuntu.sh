@@ -38,12 +38,12 @@ elif ! python -c "import blacknode" >/dev/null 2>&1; then
   python -m pip install "blacknode @ git+https://github.com/temiroff/Blacknode.git"
 fi
 
-token_file="${BLACKNODE_AUTH_TOKEN_FILE:-$repo_dir/../blacknode-hardware/.blacknode-hardware/auth.token}"
+token_file="${BLACKNODE_AUTH_TOKEN_FILE:-$repo_dir/../blacknode-robot/.blacknode-hardware/auth.token}"
 if [[ ! -f "$token_file" ]]; then
   echo
   echo "Pairing token not found at:"
   echo "  $token_file"
-  echo "Run ./pair.sh in blacknode-hardware, then configure with:"
+  echo "Run ./pair.sh in blacknode-robot, then configure with:"
   echo "  BLACKNODE_AUTH_TOKEN_FILE=/path/to/auth.token ./configure.sh"
   exit 1
 fi
