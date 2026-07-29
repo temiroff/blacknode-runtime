@@ -330,10 +330,16 @@ def test_manifest_reports_packages_from_runtime_package_path(
 
 def test_blacknode_package_manifest_loads():
     path = Path(__file__).resolve().parents[1] / "blacknode-package.toml"
-    package = tomllib.loads(path.read_text(encoding="utf-8"))["package"]
+    manifest = tomllib.loads(path.read_text(encoding="utf-8"))
+    package = manifest["package"]
     assert package["name"] == "blacknode-runtime"
     assert package["layer"] == "runtime"
     assert package["component-mode"] is True
+    assert set(manifest["components"]) == {"deployment"}
+    capabilities = set(manifest["components"]["deployment"]["capabilities"])
+    assert "deployment.rollout" in capabilities
+    assert "deployment.rollback" in capabilities
+    assert not any(capability.startswith("runtime.workflow") for capability in capabilities)
 
 
 def test_package_sync_rejects_source_repository_name_mismatch(tmp_path: Path):
@@ -769,14 +775,29 @@ def test_deployment_telemetry_bridge_reports_latest_robot_state():
     })
     try:
         assert publisher.enabled is True
-        assert publisher.publish_robot_state(
-            {"shoulder": 12.5, "elbow": -4.0},
-            torque_enabled=True,
-            joint_limits={
-                "shoulder": (-90.0, 90.0),
-                "elbow": (-45.0, 45.0),
+        state = {
+            "kind": "blacknode.device-state",
+            "schema_version": 1,
+            "device_id": "leader-arm",
+            "connected": True,
+            "armed": True,
+            "torque_enabled": True,
+            "joint_state": {
+                "kind": "blacknode.joint-state",
+                "schema_version": 1,
+                "position_unit": "radian",
+                "velocity_unit": "radian/s",
+                "positions": {"shoulder": 0.2, "elbow": -0.1},
+                "velocities": {"shoulder": 0.0, "elbow": 0.0},
+                "efforts": {},
+                "limits": {
+                    "shoulder": {"lower": -1.5, "upper": 1.5},
+                    "elbow": {"lower": -0.75, "upper": 0.75},
+                },
             },
-        )
+            "faults": [],
+        }
+        assert publisher.publish_device_state(state)
         for _ in range(20):
             sample = receiver.latest()
             if sample["available"]:
@@ -784,23 +805,7 @@ def test_deployment_telemetry_bridge_reports_latest_robot_state():
             time.sleep(0.01)
         assert sample["available"] is True
         assert sample["stale"] is False
-        assert sample["payload"]["torque_enabled"] is True
-        assert sample["payload"]["joints"] == [
-            {
-                "name": "shoulder",
-                "position": 12.5,
-                "velocity": 0.0,
-                "lower_limit": -90.0,
-                "upper_limit": 90.0,
-            },
-            {
-                "name": "elbow",
-                "position": -4.0,
-                "velocity": 0.0,
-                "lower_limit": -45.0,
-                "upper_limit": 45.0,
-            },
-        ]
+        assert sample["payload"] == state
     finally:
         publisher.close()
         receiver.close()
@@ -819,11 +824,23 @@ message = {
     "sequence": 1,
     "sent_at": "2026-07-25T00:00:00+00:00",
     "payload": {
+        "kind": "blacknode.device-state",
+        "schema_version": 1,
+        "device_id": "gripper",
         "connected": True,
+        "armed": False,
         "torque_enabled": False,
-        "position_unit": "degree",
-        "velocity_unit": "degree/s",
-        "joints": [{"name": "gripper", "position": 7.0, "velocity": 0.0}],
+        "joint_state": {
+            "kind": "blacknode.joint-state",
+            "schema_version": 1,
+            "position_unit": "radian",
+            "velocity_unit": "radian/s",
+            "positions": {"gripper": 0.12},
+            "velocities": {"gripper": 0.0},
+            "efforts": {},
+            "limits": {},
+        },
+        "faults": [],
     },
 }
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -844,7 +861,7 @@ time.sleep(1)
             time.sleep(0.02)
         assert sample["available"] is True
         assert sample["state"] == "running"
-        assert sample["payload"]["joints"][0]["name"] == "gripper"
+        assert sample["payload"]["joint_state"]["positions"]["gripper"] == 0.12
     finally:
         store.stop_all()
 
@@ -897,7 +914,16 @@ message = {
     "stream": "robot-state",
     "sequence": 1,
     "sent_at": "2026-07-25T00:00:00+00:00",
-    "payload": {"connected": True, "torque_enabled": False, "joints": []},
+    "payload": {
+        "kind": "blacknode.device-state",
+        "schema_version": 1,
+        "device_id": "stale-arm",
+        "connected": True,
+        "armed": False,
+        "torque_enabled": False,
+        "joint_state": None,
+        "faults": [],
+    },
 }
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.sendto(json.dumps(message).encode(), (host, int(port)))

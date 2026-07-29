@@ -1,23 +1,20 @@
 [package]
 name = "blacknode-runtime"
-version = "0.3.21"
-description = "Authenticated component loading, dependency resolution, workflow execution, process supervision, configuration, logs, and rollback."
+version = "0.4.0"
+description = "Authenticated remote deployment, rollout, rollback, logs, and service supervision for Blacknode devices."
 requires-blacknode = ">=0.3.0"
 layer = "runtime"
 component-mode = true
 
-[components.service]
-description = "Managed component loading, workflow execution, configuration, process lifecycle, logging, and deployment service."
+[components.deployment]
+description = "Independently deployable device agent for artifact staging, rollout, rollback, logs, and service supervision."
 default = true
 capabilities = [
-  "runtime.manifest",
-  "runtime.component-loading",
-  "runtime.dependency-resolution",
-  "runtime.workflow-execution",
-  "runtime.process-lifecycle",
-  "runtime.configuration",
-  "runtime.logging",
-  "runtime.deployment",
-  "runtime.supervision",
-  "runtime.rollback",
+  "deployment.manifest",
+  "deployment.remote-services",
+  "deployment.artifact-staging",
+  "deployment.rollout",
+  "deployment.rollback",
+  "deployment.logs",
+  "deployment.supervision",
 ]

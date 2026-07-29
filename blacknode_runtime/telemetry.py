@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import math
 import os
 import secrets
 import socket
@@ -120,6 +119,11 @@ class DeploymentTelemetryReceiver:
             payload = message.get("payload")
             if not stream or not isinstance(payload, dict):
                 continue
+            if stream == "robot-state" and (
+                payload.get("kind") != "blacknode.device-state"
+                or payload.get("schema_version") != 1
+            ):
+                continue
             received_at = _now()
             sample = {
                 "sequence": int(message.get("sequence") or 0),
@@ -146,8 +150,6 @@ class DeploymentTelemetryPublisher:
         self.deployment_id = deployment_id
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if address else None
         self._sequence = 0
-        self._last_positions: dict[str, float] = {}
-        self._last_position_time: float | None = None
 
     @classmethod
     def from_env(cls, environment: Mapping[str, str] | None = None) -> DeploymentTelemetryPublisher:
@@ -194,70 +196,20 @@ class DeploymentTelemetryPublisher:
         except (OSError, TypeError, ValueError):
             return False
 
-    def publish_robot_state(
-        self,
-        positions: Mapping[str, float],
-        *,
-        torque_enabled: bool | None,
-        connected: bool = True,
-        position_unit: str = "degree",
-        error: str = "",
-        joint_limits: Mapping[str, tuple[float, float]] | None = None,
-    ) -> bool:
-        now = time.monotonic()
-        clean_positions = {
-            str(name): float(value)
-            for name, value in positions.items()
-        }
-        elapsed = (
-            now - self._last_position_time
-            if self._last_position_time is not None
-            else 0.0
-        )
-        velocities = {
-            name: (
-                (position - self._last_positions[name]) / elapsed
-                if elapsed > 0 and name in self._last_positions
-                else 0.0
-            )
-            for name, position in clean_positions.items()
-        }
-        clean_limits: dict[str, tuple[float, float]] = {}
-        for name, raw_limits in (joint_limits or {}).items():
-            if name not in clean_positions:
-                continue
-            try:
-                lower, upper = (float(raw_limits[0]), float(raw_limits[1]))
-            except (IndexError, TypeError, ValueError):
-                continue
-            if math.isfinite(lower) and math.isfinite(upper) and lower < upper:
-                clean_limits[str(name)] = (lower, upper)
-        self._last_positions = clean_positions
-        self._last_position_time = now
-        velocity_unit = f"{position_unit}/s" if position_unit else "unit/s"
-        return self.publish("robot-state", {
-            "connected": bool(connected),
-            "torque_enabled": torque_enabled,
-            "position_unit": position_unit,
-            "velocity_unit": velocity_unit,
-            "joints": [
-                {
-                    "name": name,
-                    "position": position,
-                    "velocity": velocities[name],
-                    **(
-                        {
-                            "lower_limit": clean_limits[name][0],
-                            "upper_limit": clean_limits[name][1],
-                        }
-                        if name in clean_limits
-                        else {}
-                    ),
-                }
-                for name, position in clean_positions.items()
-            ],
-            "error": error,
-        })
+    def publish_device_state(self, state: Mapping[str, Any]) -> bool:
+        """Transport one canonical ``blacknode-robot`` DeviceState payload."""
+        if state.get("kind") != "blacknode.device-state":
+            return False
+        if state.get("schema_version") != 1:
+            return False
+        joint_state = state.get("joint_state")
+        if joint_state is not None and (
+            not isinstance(joint_state, Mapping)
+            or joint_state.get("kind") != "blacknode.joint-state"
+            or joint_state.get("schema_version") != 1
+        ):
+            return False
+        return self.publish("robot-state", state)
 
     def close(self) -> None:
         if self._socket is None:

@@ -1,25 +1,27 @@
 # blacknode-runtime
 
-Authenticated remote deployment and process supervision for Blacknode devices.
+Authenticated remote deployment and service supervision for Blacknode devices.
 
-The runtime owns:
+The package exposes one independently deployable `deployment` component. It
+owns:
 
-- process lifecycle and supervision;
-- extension-component loading and dependency resolution;
-- workflow staging and execution;
-- authenticated configuration;
-- logging;
-- infrastructure deployment lifecycle: staging, start, stop, revision history,
-  and rollback.
+- authenticated remote service endpoints;
+- artifact and workflow-snapshot staging;
+- rollout, start, stop, and revision history;
+- rollback to a retained revision;
+- deployment logs and process-group supervision;
+- synchronization of the package set declared by a deployment artifact.
 
-Deployment and rollback operate on runtime artifacts and supervised processes.
-Robot behavior, motion planning, and hardware logic stay in their owning
-packages.
+Blacknode core owns graph validation and execution semantics, component
+activation, dependency resolution, and local managed-service lifecycle. The
+deployment agent starts a staged Blacknode artifact as a supervised remote
+process; it does not implement another workflow engine or package loader.
 
 Domain behavior remains with the package that owns it:
 
-- `blacknode-runtime` stages versioned workflow scripts, starts and stops them,
-  captures logs, reports the target environment, and rolls back revisions.
+- `blacknode-runtime/deployment` stages versioned artifacts, starts and stops
+  their processes, captures logs, reports the target environment, and rolls
+  back revisions.
 - `blacknode-robot` owns connected device state, lifecycle, health, telemetry,
   and safe hardware commands through its device components.
 - `blacknode-agent` owns memory and executive mission orchestration.
