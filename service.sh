@@ -36,7 +36,7 @@ case "$command_name" in
   overview)
     check_service --deployments
     echo
-    hardware_dir="${BLACKNODE_HARDWARE_DIR:-$(cd -- "$repo_dir/.." && pwd)/blacknode-hardware}"
+    hardware_dir="${BLACKNODE_HARDWARE_DIR:-$(cd -- "$repo_dir/.." && pwd)/blacknode-robot}"
     if [[ -x "$hardware_dir/service.sh" ]]; then
       echo "Robot hardware services"
       echo "======================="

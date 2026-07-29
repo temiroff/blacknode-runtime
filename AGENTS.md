@@ -3,9 +3,11 @@
 This independent package owns authenticated remote deployment, runtime
 manifests, artifact staging, process supervision, logs, and rollback.
 
-Keep physical hardware access in `blacknode-hardware` and planning, memory, and
-skill selection in `blacknode-agent`. Runtime deployments may call those
-services through their public contracts but must not duplicate them.
+Keep device state, lifecycle, health, and telemetry in
+`blacknode-robot/devices` and `blacknode-robot/telemetry`. Keep physical
+transport access in `blacknode-drivers`, and planning, memory, and skill
+selection in `blacknode-agent`. Runtime deployments may call those services
+through their public contracts but must not duplicate them.
 
 Safety and security:
 

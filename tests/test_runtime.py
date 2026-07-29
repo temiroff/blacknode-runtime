@@ -393,27 +393,27 @@ def test_package_sync_activates_declared_components_and_adapters(
             "name": "blacknode-skills",
             "git_url": "https://github.com/temiroff/blacknode-skills.git",
             "version": "0.1.0",
-            "components": ["follow-person"],
+            "components": ["follow"],
             "adapters": [{
-                "component": "follow-person",
+                "component": "follow",
                 "adapter": "ros2",
             }],
         }],
     })
 
     assert activated == [
-        ("component", "blacknode-skills", "follow-person"),
-        ("adapter", "blacknode-skills", "follow-person", "ros2"),
+        ("component", "blacknode-skills", "follow"),
+        ("adapter", "blacknode-skills", "follow", "ros2"),
     ]
     assert result["activated"] == [
         {
             "package": "blacknode-skills",
-            "component": "follow-person",
+            "component": "follow",
             "adapter": "",
         },
         {
             "package": "blacknode-skills",
-            "component": "follow-person",
+            "component": "follow",
             "adapter": "ros2",
         },
     ]

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 runtime_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-hardware_dir="${BLACKNODE_HARDWARE_DIR:-$(cd -- "$runtime_dir/.." && pwd)/blacknode-hardware}"
-hardware_git_url="${BLACKNODE_HARDWARE_GIT_URL:-https://github.com/temiroff/blacknode-hardware.git}"
+hardware_dir="${BLACKNODE_HARDWARE_DIR:-$(cd -- "$runtime_dir/.." && pwd)/blacknode-robot}"
+hardware_git_url="${BLACKNODE_HARDWARE_GIT_URL:-https://github.com/temiroff/blacknode-robot.git}"
 plan_only=false
 stop_deployments=false
 hardware_args=()
@@ -23,7 +23,7 @@ Examples:
   ./install-device.sh --plan
 
 The installer:
-  1. installs blacknode-hardware and its dependencies;
+  1. installs the blacknode-robot device and telemetry components;
   2. discovers and configures every responding serial robot;
   3. installs one hardware systemd service per robot;
   4. installs the shared blacknode-runtime service on port 8766;
@@ -81,9 +81,9 @@ if [[ "$plan_only" == true ]]; then
   echo "Plan"
   echo "----"
   if [[ -d "$hardware_dir" ]]; then
-    echo "1. Reuse the existing blacknode-hardware checkout."
+    echo "1. Reuse the existing blacknode-robot checkout."
   else
-    echo "1. Clone blacknode-hardware from $hardware_git_url."
+    echo "1. Clone blacknode-robot from $hardware_git_url."
   fi
   echo "2. Install hardware system and Python dependencies."
   echo "3. Discover every responding serial robot and install its service."
@@ -100,11 +100,11 @@ if [[ ! -d "$hardware_dir" ]]; then
   mkdir -p -- "$(dirname -- "$hardware_dir")"
   git clone "$hardware_git_url" "$hardware_dir"
 elif [[ ! -f "$hardware_dir/blacknode-package.toml" ]]; then
-  echo "The hardware path exists but is not a blacknode-hardware checkout:"
+  echo "The hardware path exists but is not a blacknode-robot checkout:"
   echo "  $hardware_dir"
   exit 1
 else
-  echo "Using existing blacknode-hardware checkout."
+  echo "Using existing blacknode-robot checkout."
 fi
 
 runtime_config="$runtime_dir/.blacknode-runtime/runtime.json"
