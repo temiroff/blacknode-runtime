@@ -23,6 +23,7 @@ from blacknode_runtime import environment as environment_module
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
 from blacknode_runtime.managed_services import ManagedServiceError, ManagedServiceStore
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
+from blacknode_runtime.ros2_streams import Ros2TopicStreamError, Ros2TopicStreamStore
 from blacknode_runtime.server import create_server
 from blacknode_runtime.telemetry import DeploymentTelemetryPublisher, DeploymentTelemetryReceiver
 from scripts.render_systemd_unit import render_unit
@@ -1341,6 +1342,142 @@ def test_http_managed_service_lifecycle_is_authenticated(tmp_path: Path):
         server.shutdown()
         server.server_close()
         store.stop_all()
+
+
+class _FakeRos2TopicAdapter:
+    def __init__(self):
+        self.running = {}
+        self.stopped = []
+
+    def discover_type(self, topic):
+        assert topic == "/scan"
+        return "sensor_msgs/msg/LaserScan"
+
+    def start(self, config):
+        self.running[config["topic"]] = dict(config)
+        return {
+            "running": True,
+            "backend": "native",
+            "topic": config["topic"],
+            "message_type": config["message_type"],
+            "messages": [{"ranges": [1.0, 2.0]}],
+            "latest": {"ranges": [1.0, 2.0]},
+            "received": 1,
+            "source_fresh": True,
+            "last_message_time_ns": 42,
+            "age_seconds": 0.01,
+            "stale_after_seconds": config["stale_after_seconds"],
+        }
+
+    def once(self, config):
+        return self.start(config) | {"running": False}
+
+    def status(self, topic):
+        return self.start(self.running[topic])
+
+    def stop(self, topic):
+        config = self.running.pop(topic)
+        self.stopped.append(topic)
+        return {
+            "running": False,
+            "backend": "native",
+            "topic": topic,
+            "message_type": config["message_type"],
+            "messages": [],
+            "received": 0,
+            "source_fresh": False,
+        }
+
+    def outputs(self, status, report):
+        return {
+            "running": bool(status.get("running")),
+            "message": status.get("latest") or {},
+            "messages": list(status.get("messages") or []),
+            "stream": {
+                "kind": "blacknode.message-stream",
+                "stream_id": "topic-subscriber:" + str(status.get("topic") or ""),
+                "topic": status.get("topic") or "",
+            },
+            "status": {
+                "kind": "blacknode.stream-status",
+                "state": "ready" if status.get("source_fresh") else "stopped",
+                "source_fresh": bool(status.get("source_fresh")),
+            },
+            "received": int(status.get("received") or 0),
+            "backend": str(status.get("backend") or "native"),
+            "report": report,
+        }
+
+
+def test_remote_ros2_topic_store_discovers_streams_and_stops_idempotently():
+    adapter = _FakeRos2TopicAdapter()
+    store = Ros2TopicStreamStore(adapter)
+
+    started = store.start("editor-scan", {"topic": "/scan"})
+    assert started["outputs"]["running"] is True
+    assert started["outputs"]["message"]["ranges"] == [1.0, 2.0]
+    assert adapter.running["/scan"]["message_type"] == "sensor_msgs/msg/LaserScan"
+
+    status = store.status("editor-scan")
+    assert status["outputs"]["received"] == 1
+    assert status["outputs"]["status"]["source_fresh"] is True
+
+    stopped = store.stop("editor-scan")
+    assert stopped["outputs"]["running"] is False
+    assert store.stop("editor-scan")["outputs"]["running"] is False
+    assert adapter.stopped == ["/scan"]
+
+
+def test_remote_ros2_topic_store_rejects_unscoped_values():
+    store = Ros2TopicStreamStore(_FakeRos2TopicAdapter())
+    with pytest.raises(Ros2TopicStreamError, match="topic is invalid"):
+        store.start("editor-scan", {"topic": "scan"})
+    with pytest.raises(Ros2TopicStreamError, match="id is invalid"):
+        store.start("../scan", {"topic": "/scan"})
+
+
+def test_http_remote_ros2_topic_lifecycle_is_authenticated(tmp_path: Path):
+    token = "runtime-pairing-token-" + "x" * 32
+    config, _ = _config(tmp_path, token)
+    deployment_store = DeploymentStore(tmp_path / "deployments")
+    topic_store = Ros2TopicStreamStore(_FakeRos2TopicAdapter())
+    server = create_server(
+        config,
+        deployment_store,
+        token,
+        ros2_topic_store=topic_store,
+        port=0,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with pytest.raises(urllib.error.HTTPError) as unauthorized:
+            _request(f"{base}/ros2/topics")
+        assert unauthorized.value.code == 401
+
+        _, started = _request(
+            f"{base}/ros2/topics/editor-scan/start",
+            token=token,
+            payload={"topic": "/scan", "message_type": ""},
+        )
+        assert started["outputs"]["running"] is True
+        _, status = _request(
+            f"{base}/ros2/topics/editor-scan",
+            token=token,
+        )
+        assert status["outputs"]["message"]["ranges"] == [1.0, 2.0]
+        _, stopped = _request(
+            f"{base}/ros2/topics/editor-scan/stop",
+            token=token,
+            payload={},
+        )
+        assert stopped["outputs"]["running"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        topic_store.stop_all()
+        deployment_store.stop_all()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="systemd unit paths are POSIX-only")

@@ -16,6 +16,7 @@ from .diagnostics import ros2_diagnostics
 from .managed_services import ManagedServiceError, ManagedServiceStore
 from .manifest import runtime_manifest
 from .package_manager import PackageManager, PackageSyncError
+from .ros2_streams import Ros2TopicStreamError, Ros2TopicStreamStore
 
 
 MAX_REQUEST_BYTES = 5 * 1024 * 1024
@@ -25,6 +26,9 @@ _DEPLOYMENT_PATH = re.compile(
 _SERVICE_PATH = re.compile(
     r"^/services/([a-z0-9-]+)(?:/(start|stop|logs))?$"
 )
+_ROS2_TOPIC_PATH = re.compile(
+    r"^/ros2/topics/([a-z0-9-]+)(?:/(start|once|stop))?$"
+)
 
 
 class RuntimeRequestHandler(BaseHTTPRequestHandler):
@@ -33,6 +37,7 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
     auth_token: str
     package_manager: PackageManager | None
     service_store: ManagedServiceStore
+    ros2_topic_store: Ros2TopicStreamStore
 
     def log_message(self, _format: str, *_args: Any) -> None:
         return
@@ -93,6 +98,20 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/diagnostics/ros2":
             self._send(200, ros2_diagnostics())
+            return
+        if path == "/ros2/topics":
+            self._send(200, {"streams": self.ros2_topic_store.list()})
+            return
+        topic_match = _ROS2_TOPIC_PATH.fullmatch(path)
+        if topic_match:
+            service_id, action = topic_match.groups()
+            if action is not None:
+                self._send(405, {"ok": False, "error": "method not allowed"})
+                return
+            try:
+                self._send(200, self.ros2_topic_store.status(service_id))
+            except Ros2TopicStreamError as exc:
+                self._send(400, {"ok": False, "error": str(exc)})
             return
         service_match = _SERVICE_PATH.fullmatch(path)
         if service_match:
@@ -162,6 +181,20 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
             if path == "/deployments":
                 self._send(201, self.store.stage(payload))
                 return
+            topic_match = _ROS2_TOPIC_PATH.fullmatch(path)
+            if topic_match:
+                service_id, action = topic_match.groups()
+                if action == "start":
+                    result = self.ros2_topic_store.start(service_id, payload)
+                elif action == "once":
+                    result = self.ros2_topic_store.once(service_id, payload)
+                elif action == "stop":
+                    result = self.ros2_topic_store.stop(service_id)
+                else:
+                    self._send(405, {"ok": False, "error": "method not allowed"})
+                    return
+                self._send(200, result)
+                return
             service_match = _SERVICE_PATH.fullmatch(path)
             if service_match:
                 service_id, action = service_match.groups()
@@ -207,6 +240,8 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
             self._send(409, {"ok": False, "error": str(exc)})
         except PackageSyncError as exc:
             self._send(409, {"ok": False, "error": str(exc)})
+        except Ros2TopicStreamError as exc:
+            self._send(400, {"ok": False, "error": str(exc)})
 
     def do_DELETE(self) -> None:  # noqa: N802
         if not self._require_auth():
@@ -231,6 +266,7 @@ def create_server(
     *,
     package_manager: PackageManager | None = None,
     service_store: ManagedServiceStore | None = None,
+    ros2_topic_store: Ros2TopicStreamStore | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
 ) -> ThreadingHTTPServer:
@@ -239,6 +275,7 @@ def create_server(
     bound_service_store = service_store or ManagedServiceStore(
         Path(config.state_dir) / "services"
     )
+    bound_ros2_topic_store = ros2_topic_store or Ros2TopicStreamStore()
     handler = type(
         "BoundRuntimeRequestHandler",
         (RuntimeRequestHandler,),
@@ -248,6 +285,7 @@ def create_server(
             "auth_token": auth_token,
             "package_manager": package_manager,
             "service_store": bound_service_store,
+            "ros2_topic_store": bound_ros2_topic_store,
         },
     )
     return ThreadingHTTPServer((host, port), handler)
@@ -260,6 +298,7 @@ def serve(
     *,
     package_manager: PackageManager | None = None,
     service_store: ManagedServiceStore | None = None,
+    ros2_topic_store: Ros2TopicStreamStore | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
 ) -> None:
@@ -269,6 +308,7 @@ def serve(
         auth_token,
         package_manager=package_manager,
         service_store=service_store,
+        ros2_topic_store=ros2_topic_store,
         host=host,
         port=port,
     )
@@ -278,4 +318,5 @@ def serve(
     finally:
         server.server_close()
         server.RequestHandlerClass.service_store.stop_all()
+        server.RequestHandlerClass.ros2_topic_store.stop_all()
         store.stop_all()
