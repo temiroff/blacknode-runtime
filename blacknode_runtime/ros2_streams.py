@@ -72,6 +72,7 @@ class BlacknodeRos2Adapter:
             history=config["history"],
             public_node_type="ROS2",
             stale_after_seconds=config["stale_after_seconds"],
+            qos=config["qos"],
         )
         if not started.get("ok"):
             return started
@@ -86,6 +87,7 @@ class BlacknodeRos2Adapter:
             timeout=config["timeout"],
             public_node_type="ROS2",
             stale_after_seconds=config["stale_after_seconds"],
+            qos=config["qos"],
         )
 
     def status(self, topic: str) -> dict[str, Any]:
@@ -304,6 +306,9 @@ class Ros2TopicStreamStore:
             stale = max(0.05, min(120.0, float(payload.get("stale_after_seconds") or 2.0)))
         except (TypeError, ValueError) as exc:
             raise Ros2TopicStreamError("history, timeout, and stale threshold must be numeric") from exc
+        qos = str(payload.get("qos") or "sensor_data").strip().lower()
+        if qos not in {"sensor_data", "reliable", "transient_local"}:
+            raise Ros2TopicStreamError("qos must be sensor_data, reliable, or transient_local")
         return {
             "id": service_id,
             "topic": topic,
@@ -312,6 +317,7 @@ class Ros2TopicStreamStore:
             "history": history,
             "timeout": timeout,
             "stale_after_seconds": stale,
+            "qos": qos,
         }
 
     @staticmethod
