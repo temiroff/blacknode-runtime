@@ -1,6 +1,6 @@
 [package]
 name = "blacknode-runtime"
-version = "0.4.7"
+version = "0.4.8"
 description = "Authenticated remote deployment, rollout, rollback, logs, and service supervision for Blacknode devices."
 requires-blacknode = ">=0.3.0"
 layer = "runtime"
