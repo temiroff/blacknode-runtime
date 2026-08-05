@@ -33,6 +33,7 @@ FEATURES = [
     "ros2_diagnostics_v1",
     "managed_ros2_services_v1",
     "remote_ros2_topic_stream_v1",
+    "remote_ros2_image_stream_v1",
 ]
 
 

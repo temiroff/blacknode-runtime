@@ -23,6 +23,7 @@ from blacknode_runtime import environment as environment_module
 from blacknode_runtime.manifest import FEATURES, runtime_manifest
 from blacknode_runtime.managed_services import ManagedServiceError, ManagedServiceStore
 from blacknode_runtime.package_manager import PackageManager, PackageSyncError
+from blacknode_runtime.ros2_images import Ros2ImageStreamError, Ros2ImageStreamStore
 from blacknode_runtime.ros2_streams import Ros2TopicStreamError, Ros2TopicStreamStore
 from blacknode_runtime.server import create_server
 from blacknode_runtime.telemetry import DeploymentTelemetryPublisher, DeploymentTelemetryReceiver
@@ -1477,6 +1478,114 @@ def test_http_remote_ros2_topic_lifecycle_is_authenticated(tmp_path: Path):
         server.shutdown()
         server.server_close()
         topic_store.stop_all()
+        deployment_store.stop_all()
+
+
+class _FakeRos2ImageAdapter:
+    def __init__(self):
+        self.running = {}
+        self.stopped = []
+
+    def resolve_message_type(self, topic, requested):
+        return "compressed" if requested == "auto" else requested
+
+    def start(self, config):
+        self.running[config["id"]] = dict(config)
+        return {
+            "ok": True,
+            "running": True,
+            "stream_id": config["id"],
+            "stream_url": "http://0.0.0.0:19001/stream.mjpg",
+            "snapshot_url": "http://0.0.0.0:19001/snapshot.jpg",
+            "health_url": "http://0.0.0.0:19001/health",
+            "frame_url": "http://0.0.0.0:19001/frame.bin",
+        }
+
+    def once(self, config):
+        return {
+            "ok": True,
+            "running": False,
+            "stream_id": config["id"],
+            "image": "data:image/jpeg;base64,AA==",
+            "metadata": {"width": 640, "height": 480, "encoding": "rgb8"},
+        }
+
+    def status(self, stream_id):
+        return self.start(self.running[stream_id])
+
+    def stop(self, stream_id):
+        self.running.pop(stream_id, None)
+        self.stopped.append(stream_id)
+        return {"ok": True, "stopped": 1}
+
+
+def test_remote_ros2_image_store_manages_live_and_one_shot_frames():
+    adapter = _FakeRos2ImageAdapter()
+    store = Ros2ImageStreamStore(adapter)
+
+    started = store.start("editor-camera", {"topic": "/camera/image_raw"})
+    assert started["stream"]["running"] is True
+    assert started["stream"]["message_type"] == "compressed"
+    assert store.status("editor-camera")["stream"]["stream_url"].endswith("/stream.mjpg")
+
+    shot = store.once("editor-depth", {
+        "topic": "/camera/depth/image_raw",
+        "message_type": "raw",
+    })
+    assert shot["stream"]["image"].startswith("data:image/jpeg")
+    assert shot["stream"]["metadata"]["encoding"] == "rgb8"
+
+    stopped = store.stop("editor-camera")
+    assert stopped["stream"]["running"] is False
+    assert adapter.stopped == ["editor-camera"]
+
+
+def test_remote_ros2_image_store_rejects_unscoped_values():
+    store = Ros2ImageStreamStore(_FakeRos2ImageAdapter())
+    with pytest.raises(Ros2ImageStreamError, match="topic is invalid"):
+        store.start("editor-camera", {"topic": "camera/image_raw"})
+    with pytest.raises(Ros2ImageStreamError, match="id is invalid"):
+        store.start("../camera", {"topic": "/camera/image_raw"})
+
+
+def test_http_remote_ros2_image_lifecycle_is_authenticated(tmp_path: Path):
+    token = "runtime-pairing-token-" + "x" * 32
+    config, _ = _config(tmp_path, token)
+    deployment_store = DeploymentStore(tmp_path / "deployments")
+    image_store = Ros2ImageStreamStore(_FakeRos2ImageAdapter())
+    server = create_server(
+        config,
+        deployment_store,
+        token,
+        ros2_image_store=image_store,
+        port=0,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with pytest.raises(urllib.error.HTTPError) as unauthorized:
+            _request(f"{base}/ros2/images")
+        assert unauthorized.value.code == 401
+
+        _, started = _request(
+            f"{base}/ros2/images/editor-camera/start",
+            token=token,
+            payload={"topic": "/camera/image_raw", "message_type": "auto"},
+        )
+        assert started["stream"]["running"] is True
+        _, status = _request(f"{base}/ros2/images/editor-camera", token=token)
+        assert status["stream"]["health_url"].endswith("/health")
+        _, stopped = _request(
+            f"{base}/ros2/images/editor-camera/stop",
+            token=token,
+            payload={},
+        )
+        assert stopped["stream"]["running"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        image_store.stop_all()
         deployment_store.stop_all()
 
 
