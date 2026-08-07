@@ -34,6 +34,13 @@ def test_runtime_service_scripts_support_isolated_instances():
     assert 'comment "Blacknode runtime${instance:+ $instance}"' in install_service
 
 
+def test_package_install_restarts_existing_unit_without_rewriting_its_port():
+    install_package = (REPO / "install-package.sh").read_text(encoding="utf-8")
+
+    assert "sudo systemctl restart blacknode-runtime.service" in install_package
+    assert '"$repo_dir/install-service.sh"' not in install_package
+
+
 @pytest.mark.skipif(os.name == "nt", reason="device installer targets Linux")
 def test_device_installer_has_valid_bash_and_help():
     subprocess.run(["bash", "-n", str(INSTALLER)], check=True)

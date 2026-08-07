@@ -46,7 +46,10 @@ fi
 echo
 if systemctl list-unit-files blacknode-runtime.service >/dev/null 2>&1; then
   echo "Updating and restarting the Blacknode Runtime service..."
-  "$repo_dir/install-service.sh"
+  # The installed unit is the source of truth for its host, port, config, and
+  # state paths. Re-rendering it here would replace custom values with the
+  # install-service defaults (including port 8766).
+  sudo systemctl restart blacknode-runtime.service
 else
   echo "Package installed. Start the runtime with ./start.sh,"
   echo "or install it at boot with ./install-service.sh."
