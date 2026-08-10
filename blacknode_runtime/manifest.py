@@ -30,6 +30,7 @@ FEATURES = [
     "single_target_deployment_v1",
     "deployment_workflow_v1",
     "deployment_motion_control_v1",
+    "deployment_mapping_control_v1",
     "ros2_diagnostics_v1",
     "managed_ros2_services_v1",
     "remote_ros2_topic_stream_v1",

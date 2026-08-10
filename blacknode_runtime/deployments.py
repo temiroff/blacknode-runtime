@@ -30,6 +30,7 @@ DEFAULT_TELEMETRY_WATCHDOG_INTERVAL_SECONDS = 0.5
 _ID_RE = re.compile(r"[^a-z0-9]+")
 _PROJECT_ID_RE = re.compile(r"[a-z0-9-]{1,60}")
 _WORKFLOW_SLUG_RE = re.compile(r"[a-zA-Z0-9_-]{1,60}")
+_ROS_SERVICE_RE = re.compile(r"/[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*")
 
 
 class DeploymentError(RuntimeError):
@@ -170,11 +171,103 @@ class DeploymentStore:
                     )
                 ]),
                 "motion_armed": False,
+                "mapping_control_count": len(self._mapping_controls(manifest)),
+                "mapping_topic": (
+                    str(self._mapping_controls(manifest)[0].get("map_topic") or "/map")
+                    if len(self._mapping_controls(manifest)) == 1
+                    else ""
+                ),
+                "last_map_artifact": (
+                    dict(existing.get("last_map_artifact") or {}) if existing else {}
+                ),
                 "created_at": existing.get("created_at", now) if existing else now,
                 "updated_at": now,
             }
             self._write_record(record)
             return dict(record)
+
+    def save_map(self, deployment_id: str) -> dict[str, Any]:
+        """Persist the active mapping deployment through its declared ROS services."""
+        with self._lock:
+            record = self._refresh(self._require(deployment_id))
+            if record.get("state") != "running":
+                raise DeploymentError("mapping deployment must be running before saving a map")
+            manifest = self._active_manifest(deployment_id, record)
+            controls = self._mapping_controls(manifest)
+            if not controls:
+                raise DeploymentError(
+                    "deployment has no mapping control; stage the mapping workflow again"
+                )
+            if len(controls) != 1:
+                raise DeploymentError(
+                    "deployment has multiple mapping controls; deploy one mapping session per robot"
+                )
+            control = controls[0]
+            directory = Path(str(control.get("save_directory") or "~/Blacknode/maps"))
+            directory = directory.expanduser().resolve()
+            directory.mkdir(parents=True, exist_ok=True)
+            raw_name = str(control.get("map_name") or "map_01").strip()
+            map_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw_name).strip(".-") or "map_01"
+            stem = directory / map_name
+            timeout = max(5.0, min(120.0, float(control.get("service_timeout") or 30.0)))
+            save_service = self._mapping_service_name(
+                control.get("save_map_service"),
+                "/slam_toolbox/save_map",
+            )
+            save = self._run_ros2(
+                [
+                    "service", "call", save_service, "slam_toolbox/srv/SaveMap",
+                    json.dumps({"name": {"data": str(stem)}}, separators=(",", ":")),
+                ],
+                timeout=timeout,
+            )
+            if not save.get("ok"):
+                raise DeploymentError(
+                    "map save failed: "
+                    + str(save.get("error") or save.get("stderr") or "SaveMap service failed")
+                )
+            serialized = False
+            serialize_error = ""
+            if bool(control.get("serialize_pose_graph", True)):
+                serialize_service = self._mapping_service_name(
+                    control.get("serialize_service"),
+                    "/slam_toolbox/serialize_map",
+                )
+                graph = self._run_ros2(
+                    [
+                        "service", "call", serialize_service,
+                        "slam_toolbox/srv/SerializePoseGraph",
+                        json.dumps({"filename": str(stem)}, separators=(",", ":")),
+                    ],
+                    timeout=timeout,
+                )
+                serialized = bool(graph.get("ok"))
+                if not serialized:
+                    serialize_error = str(
+                        graph.get("error") or graph.get("stderr") or "SerializePoseGraph failed"
+                    )
+            artifact = {
+                "kind": "blacknode.map-artifact",
+                "schema_version": 1,
+                "provider": "slam_toolbox",
+                "map_name": map_name,
+                "directory": str(directory),
+                "map_yaml": str(stem.with_suffix(".yaml")),
+                "map_image": str(stem.with_suffix(".pgm")),
+                "pose_graph": str(stem),
+                "pose_graph_serialized": serialized,
+                "map_topic": str(control.get("map_topic") or "/map"),
+                "created_at": _now(),
+            }
+            record.update(last_map_artifact=artifact, updated_at=_now())
+            self._write_record(record)
+            return {
+                "ok": True,
+                "id": deployment_id,
+                "artifact": artifact,
+                "warning": serialize_error,
+                "deployment": dict(record),
+            }
 
     def workflow(
         self,
@@ -615,7 +708,59 @@ class DeploymentStore:
         record.setdefault("superseded_deployment_ids", [])
         record.setdefault("motion_armed", False)
         record.setdefault("motion_control_count", 0)
+        record.setdefault("mapping_control_count", 0)
+        record.setdefault("mapping_topic", "")
+        record.setdefault("last_map_artifact", {})
         return record
+
+    def _active_manifest(
+        self,
+        deployment_id: str,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        revision = str(record.get("active_revision") or record.get("staged_revision") or "")
+        path = self.root / deployment_id / "revisions" / revision / "manifest.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise DeploymentError("could not read deployment mapping control") from exc
+        return dict(payload)
+
+    @staticmethod
+    def _mapping_controls(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            dict(item)
+            for item in (manifest.get("mapping_controls") or [])
+            if isinstance(item, dict) and item.get("kind") == "slam_toolbox"
+        ]
+
+    @staticmethod
+    def _mapping_service_name(value: Any, default: str) -> str:
+        service = str(value or default).strip()
+        if _ROS_SERVICE_RE.fullmatch(service) is None:
+            raise DeploymentError(f"mapping ROS service name is invalid: {service}")
+        return service
+
+    @staticmethod
+    def _run_ros2(arguments: list[str], *, timeout: float) -> dict[str, Any]:
+        try:
+            completed = subprocess.run(
+                ["ros2", *arguments],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=runtime_environment(),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"ok": False, "error": str(exc), "stdout": "", "stderr": ""}
+        return {
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "error": "" if completed.returncode == 0 else completed.stderr.strip(),
+        }
 
     @staticmethod
     def _deployment_owner(
