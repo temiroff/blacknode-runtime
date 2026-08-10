@@ -14,6 +14,12 @@ Use the Blacknode editor for routine device operations:
 
 A deployment is staged before it is started. Starting is a separate explicit operation, and one target robot has one running deployment owner.
 
+Enabling Runtime does not disable, replace, or remove a robot's existing ROS 2
+bringup. Managed deployments and attachment services are not resumed after a
+Runtime restart or device reboot; the operator starts them explicitly again.
+Runtime shutdown terminates its complete process control group, while vendor
+services outside that group continue under their original boot configuration.
+
 ## Device installation
 
 For a new Ubuntu, Raspberry Pi, or Jetson device:
