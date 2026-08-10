@@ -1266,6 +1266,51 @@ def test_managed_ros2_service_is_scoped_and_reports_interfaces(
     assert processes[0].terminated is True
 
 
+def test_runtime_restart_does_not_resume_managed_ros2_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from blacknode_runtime import managed_services as service_module
+
+    class FakeProcess:
+        pid = 4321
+
+        def poll(self):
+            return None
+
+    starts = []
+    monkeypatch.setattr(
+        service_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: starts.append((args, kwargs)) or FakeProcess(),
+    )
+    monkeypatch.setattr(service_module, "runtime_environment", lambda: {})
+    monkeypatch.setattr(
+        service_module,
+        "inspect_ros2_interfaces",
+        lambda interfaces: {"ok": True, "interfaces": interfaces, "missing": []},
+    )
+    root = tmp_path / "services"
+    first_runtime = ManagedServiceStore(root)
+    first_runtime.start("rosorin-slam", {
+        "command": {
+            "verb": "launch",
+            "package": "slam_toolbox",
+            "target": "online_sync_launch.py",
+            "arguments": [],
+        }
+    })
+    assert len(starts) == 1
+
+    restarted_runtime = ManagedServiceStore(root)
+    restored = restarted_runtime.get("rosorin-slam", inspect=False)
+
+    assert len(starts) == 1
+    assert restored["state"] == "stopped"
+    assert restored["pid"] is None
+    assert "start the attachment service again" in restored["error"]
+
+
 def test_managed_ros2_service_rejects_shell_commands(tmp_path: Path):
     store = ManagedServiceStore(tmp_path / "services")
     with pytest.raises(ManagedServiceError, match="verb must be"):
