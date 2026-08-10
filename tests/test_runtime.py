@@ -735,6 +735,60 @@ def test_running_deployment_has_explicit_arm_and_disarm_control(
     assert stopped["motion_armed"] is False
 
 
+def test_running_mapping_deployment_saves_map_and_pose_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls = []
+    store = DeploymentStore(tmp_path / "deployments")
+    monkeypatch.setattr(
+        store,
+        "_run_ros2",
+        lambda arguments, timeout: (
+            calls.append((arguments, timeout))
+            or {"ok": True, "stdout": "saved", "stderr": "", "error": ""}
+        ),
+    )
+    staged = store.stage({
+        "name": "Map environment",
+        "deployment_id": "mapping",
+        "script": "import time\ntime.sleep(10)\n",
+        "manifest": {
+            "schema_version": 1,
+            "mapping_controls": [{
+                "kind": "slam_toolbox",
+                "node_id": "map_environment",
+                "map_topic": "/map",
+                "save_directory": str(tmp_path / "maps"),
+                "map_name": "work room",
+                "save_map_service": "/slam_toolbox/save_map",
+                "serialize_service": "/slam_toolbox/serialize_map",
+                "serialize_pose_graph": True,
+                "service_timeout": 12,
+            }],
+        },
+    })
+    assert staged["mapping_control_count"] == 1
+    assert staged["mapping_topic"] == "/map"
+    store.start(staged["id"])
+    try:
+        result = store.save_map(staged["id"])
+    finally:
+        store.stop(staged["id"])
+
+    assert result["artifact"]["map_name"] == "work-room"
+    assert result["artifact"]["pose_graph_serialized"] is True
+    assert len(calls) == 2
+    assert calls[0][0][:4] == [
+        "service", "call", "/slam_toolbox/save_map", "slam_toolbox/srv/SaveMap",
+    ]
+    assert calls[1][0][:4] == [
+        "service", "call", "/slam_toolbox/serialize_map",
+        "slam_toolbox/srv/SerializePoseGraph",
+    ]
+    assert store.get(staged["id"])["last_map_artifact"]["map_name"] == "work-room"
+
+
 def test_start_replaces_every_running_deployment_for_same_target(tmp_path: Path):
     store = DeploymentStore(tmp_path / "deployments")
     first = store.stage({

@@ -253,14 +253,17 @@ class RuntimeRequestHandler(BaseHTTPRequestHandler):
                 result = self.store.rollback(deployment_id, start=bool(payload.get("start")))
             elif action == "control":
                 command = str(payload.get("command") or "").strip().lower()
-                if command not in {"arm", "disarm"}:
+                if command not in {"arm", "disarm", "save-map"}:
                     raise DeploymentError(
-                        "deployment control command must be arm or disarm"
+                        "deployment control command must be arm, disarm, or save-map"
                     )
-                result = self.store.set_motion_armed(
-                    deployment_id,
-                    command == "arm",
-                )
+                if command == "save-map":
+                    result = self.store.save_map(deployment_id)
+                else:
+                    result = self.store.set_motion_armed(
+                        deployment_id,
+                        command == "arm",
+                    )
             else:
                 self._send(405, {"ok": False, "error": "method not allowed"})
                 return

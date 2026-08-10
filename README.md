@@ -34,7 +34,7 @@ The installer prepares Runtime, discovers supported serial robots, configures se
 
 ## Deployment contract
 
-The authenticated API supports package synchronization, artifact staging, start/stop, logs, latest normalized telemetry, workflow retrieval, remote ROS 2 topic streams, arm/disarm of one declared motion gate, revision rollback, and managed provider services. Package synchronization installs only declared sources/components and verifies node and ROS workspace availability before staging.
+The authenticated API supports package synchronization, artifact staging, start/stop, logs, latest normalized telemetry, workflow retrieval, remote ROS 2 topic streams, arm/disarm of one declared motion gate, persistent mapping controls, revision rollback, and managed provider services. A deployed `MapEnvironment` declares its map topic and save services in the deployment manifest, allowing the editor to show the live occupancy grid and save a map while the mapping process remains owned by that deployment. Package synchronization installs only declared sources/components and verifies node and ROS workspace availability before staging.
 
 Local runtime state is stored under `.blacknode-runtime/` and excluded from Git. Pairing tokens are never written to logs, process arguments, workflow artifacts, or repository files.
 

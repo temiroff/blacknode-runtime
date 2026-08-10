@@ -1,6 +1,6 @@
 [package]
 name = "blacknode-runtime"
-version = "0.4.12"
+version = "0.4.13"
 description = "Authenticated remote deployment, rollout, rollback, logs, and service supervision for Blacknode devices."
 requires-blacknode = ">=0.3.0"
 layer = "runtime"
@@ -18,4 +18,5 @@ capabilities = [
   "deployment.logs",
   "deployment.supervision",
   "deployment.ros2-topic-streams",
+  "deployment.mapping-control",
 ]
