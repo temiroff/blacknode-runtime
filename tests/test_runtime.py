@@ -1258,6 +1258,13 @@ def test_managed_ros2_service_is_scoped_and_reports_interfaces(
 
     processes = []
 
+    if os.name != "nt":
+        monkeypatch.setattr(
+            service_module.os,
+            "killpg",
+            lambda _pid, _signal: processes[0].terminate(),
+        )
+
     def fake_popen(command, **kwargs):
         process = FakeProcess()
         process.command = command
